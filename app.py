@@ -109,17 +109,13 @@ if boton_enviar:
                 df_final.to_excel(EXCEL_ASISTENCIA, index=False)
                 
                 # --- BOTÓN DE ACCESO ---
-                st.markdown(f"""
-                <div style="background-color:#d4edda; padding:20px; border-radius:10px; text-align:center; margin-top:20px;">
-                    <h3>Asistencia asentada correctamente</h3>
-                    <p>Hacé clic abajo para ingresar a la sala:</p>
-                    <a href="www.diariodecuyo.com.ar" target="_blank">
-                        <button style="background-color:#28a745; color:white; border:none; padding:12px 24px; font-size:18px; border-radius:5px; cursor:pointer;">
-                            🚀 Entrar a la Capacitación
-                        </button>
-                    </a>
-                </div>
-                """, unsafe_allow_html=True)
+               # --- BOTÓN DE ACCESO CORREGIDO ---
+st.success(f"✅ ¡Validación exitosa! Bienvenido/a, {nombre_real}.")
+st.markdown("### 📝 Asistencia asentada correctamente")
+st.write("Hacé clic abajo para ingresar a la sala de la capacitación:")
+
+# Botón nativo que abre el enlace directamente sin recargar la app
+st.link_button("🚀 Entrar a la Capacitación", LINK_CONFERENCIA, type="primary", use_container_width=True)
             else:
                 st.error("❌ El apellido no coincide con el DNI ingresado.")
         else:
