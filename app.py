@@ -12,7 +12,7 @@ EXCEL_PADRON = "docentes.xlsx"
 EXCEL_ASISTENCIA = "asistencia_registrada.xlsx"
 
 # Link de la capacitación (Modificalo por tu enlace real de Zoom o YouTube)
-LINK_CONFERENCIA = "https://zoom.us/j/tu_link_de_zoom"
+LINK_CONFERENCIA = "https://diariodecuyo.com.ar"
 
 # 1. FUNCIÓN PARA CARGAR EL PADRÓN DESDE EXCEL
 @st.cache_data(ttl=60)
