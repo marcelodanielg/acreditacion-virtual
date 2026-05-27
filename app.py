@@ -69,7 +69,7 @@ if password == "admin123":
 st.title("🎓 Sistema de Acreditación Virtual")
 st.write("Ingresá tus datos para validar tu asistencia y recibir el enlace de acceso.")
 
-LINK_CONFERENCIA = "www.diariodecuyo.com.ar"
+LINK_CONFERENCIA = www.diariodecuyo.com.ar
 
 with st.form("form_acreditacion"):
     dni_ingresado = st.text_input("Número de DNI (sin puntos)", max_chars=9)
