@@ -91,31 +91,24 @@ if boton_enviar:
             nombre_real = coincidencia.iloc[0]['nombre']
             
             if apellido_ingresado in apellido_real:
-                st.success(f"✅ ¡Validación exitosa! Bienvenido/a, {nombre_real}.")
-                
                 # --- REGISTRO DE ASISTENCIA EN VIVO ---
                 ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 nueva_asistencia = pd.DataFrame([{"dni": dni_ingresado, "nombre": nombre_real, "apellido": coincidencia.iloc[0]['apellido'], "fecha_hora": ahora}])
                 
-                # Guardar la asistencia en un Excel secundario de salida
                 if os.path.exists(EXCEL_ASISTENCIA):
                     df_asistencias_viejas = pd.read_excel(EXCEL_ASISTENCIA, dtype={"dni": str})
                     df_final = pd.concat([df_asistencias_viejas, nueva_asistencia], ignore_index=True)
                 else:
                     df_final = nueva_asistencia
                 
-                # Eliminamos duplicados rápidos para que no sume filas si el usuario refresca la página
                 df_final.drop_duplicates(subset=["dni"], keep="first", inplace=True)
                 df_final.to_excel(EXCEL_ASISTENCIA, index=False)
                 
-                # --- BOTÓN DE ACCESO ---
-               # --- BOTÓN DE ACCESO CORREGIDO ---
-st.success(f"✅ ¡Validación exitosa! Bienvenido/a, {nombre_real}.")
-st.markdown("### 📝 Asistencia asentada correctamente")
-st.write("Hacé clic abajo para ingresar a la sala de la capacitación:")
-
-# Botón nativo que abre el enlace directamente sin recargar la app
-st.link_button("🚀 Entrar a la Capacitación", LINK_CONFERENCIA, type="primary", use_container_width=True)
+                # --- MOSTRAR ACCESO NATIVO ---
+                st.success(f"✅ ¡Validación exitosa! Bienvenido/a, {nombre_real}.")
+                st.markdown("### 📝 Asistencia asentada correctamente")
+                st.write("Hacé clic abajo para ingresar a la sala de la capacitación:")
+                st.link_button("🚀 Entrar a la Capacitación", LINK_CONFERENCIA, type="primary", use_container_width=True)
             else:
                 st.error("❌ El apellido no coincide con el DNI ingresado.")
         else:
