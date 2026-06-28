@@ -17,6 +17,13 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# --- LOGO DEL MINISTERIO DE EDUCACIÓN DE SAN JUAN ---
+# Se utiliza la URL del imagotipo oficial institucional
+URL_LOGO_MINISTERIO = "https://educacion.sanjuan.gob.ar/mesj/LinkClick.aspx?fileticket=w376Zbe_pXo%3d&portalid=4&language=es-AR"
+
+st.image(URL_LOGO_MINISTERIO, use_container_width=True)
+st.markdown("---")
+
 # Nombres de los archivos de datos
 EXCEL_PADRON = "docentes.xlsx"
 EXCEL_ASISTENCIA = "asistencia_registrada.xlsx"
@@ -156,21 +163,16 @@ if password == "admin123":
 
 
 # ==========================================
-# PANTALLAS DE ÉXITO (Para evitar bloqueos de ventanas)
+# PANTALLAS DE ÉXITO
 # ==========================================
 if st.session_state.estado_flujo == "exito_entrada":
     link_destino = leer_link_actual()
     with st.container(border=True):
         st.success(f"✅ **¡Acreditación Guardada Impecable!**")
         st.markdown(f"### Bienvenido/a, **{st.session_state.datos_docente_actual.get('nombre')} {st.session_state.datos_docente_actual.get('apellido')}**")
-        st.markdown("Presioná el siguiente botón para abrir la sala virtual sin bloqueos de seguridad:")
+        st.markdown("Presioná el siguiente botón para abrir la sala de la videoconferencia:")
         
         st.link_button("🚀 INGRESAR A LA CAPACITACIÓN", link_destino, type="primary", use_container_width=True)
-        
-        st.markdown("---")
-        if st.button("⬅️ Registrar otro DNI", use_container_width=True):
-            st.session_state.estado_flujo = "formulario"
-            st.rerun()
     st.stop()
 
 elif st.session_state.estado_flujo == "exito_salida":
@@ -179,12 +181,7 @@ elif st.session_state.estado_flujo == "exito_salida":
         st.markdown(f"### Muchas gracias por participar, **{st.session_state.datos_docente_actual.get('nombre')}**.")
         st.markdown(f"⏱️ **Tiempo final de permanencia:** {st.session_state.datos_docente_actual.get('minutos')} minutos.")
         
-        # Alerta visual limpia que reemplaza la pestaña cerrada
-        st.info("🔒 **Tu asistencia de cierre ha sido procesada de forma segura.** Ya podés cerrar o salir de este sitio en tu navegador móvil o PC.")
-        
-        if st.button("⬅️ Registrar otra Salida", use_container_width=True):
-            st.session_state.estado_flujo = "formulario"
-            st.rerun()
+        st.info("🔒 **Tu asistencia de cierre ha sido procesada de forma segura.** Ya podés cerrar o salir de este sitio en tu navegador.")
     st.stop()
 
 
@@ -253,7 +250,6 @@ if boton_enviar:
                         df_asistencias.at[idx[0], "minutos_conectado"] = minutos_totales
                         df_asistencias.to_excel(EXCEL_ASISTENCIA, index=False)
                         
-                        # Almacenamos datos y cambiamos pantalla
                         st.session_state.datos_docente_actual = {
                             "nombre": df_asistencias.loc[idx[0], 'nombre'],
                             "minutos": minutos_totales
@@ -366,7 +362,7 @@ if st.session_state.mostrar_autoregistro and not es_modo_salida:
                     "dni": st.session_state.dni_pendiente, 
                     "nombre": nom_formateado, 
                     "apellido": ape_formateado, 
-                    "fecha_hora_entrada": ahora_str,
+                    "fecha_hora_entrada": ahor_str,
                     "fecha_hora_salida": None,
                     "minutos_conectado": None
                 }])
