@@ -5,6 +5,7 @@ import os
 import io
 import qrcode
 from PIL import Image
+import streamlit.components.v1 as components
 
 # Configuración de la página con tema centrado y estética compacta
 st.set_page_config(page_title="Acreditación Virtual", page_icon="🎓", layout="centered")
@@ -195,8 +196,7 @@ if boton_enviar:
                     if col not in df_asistencias.columns:
                         df_asistencias[col] = None
                 
-                # --- SOLUCIÓN CRÍTICA AL TYPEERROR ---
-                # Forzamos las columnas a tipo "object" (string) para que admitan textos sin chistar
+                # Forzamos las columnas a tipo "object" (string) para evitar TypeErrors
                 df_asistencias["fecha_hora_entrada"] = df_asistencias["fecha_hora_entrada"].astype(object)
                 df_asistencias["fecha_hora_salida"] = df_asistencias["fecha_hora_salida"].astype(object)
                 df_asistencias["minutos_conectado"] = df_asistencias["minutos_conectado"].astype(object)
@@ -217,7 +217,6 @@ if boton_enviar:
                         diferencia = ahora_dt - entrada_dt
                         minutos_totales = round(diferencia.total_seconds() / 60, 1)
                         
-                        # Guardado seguro usando .at para máxima precisión posicional
                         df_asistencias.at[idx[0], "fecha_hora_salida"] = ahora_str
                         df_asistencias.at[idx[0], "minutos_conectado"] = minutos_totales
                         df_asistencias.to_excel(EXCEL_ASISTENCIA, index=False)
@@ -225,12 +224,18 @@ if boton_enviar:
                         with st.container(border=True):
                             st.success(f"🎉 ¡Salida Registrada!, **{df_asistencias.loc[idx[0], 'nombre']}**.")
                             st.markdown(f"⏱️ **Tiempo total conectado:** {minutos_totales} minutos.")
+                            st.warning("🔒 **Asistencia finalizada.** Ya puede cerrar esta ventana de forma segura.")
+                            
+                            # Script para intentar cerrar la pestaña automáticamente
+                            components.html("<script>window.close();</script>", height=0, width=0)
                     else:
                         with st.container(border=True):
                             st.info("ℹ️ Su egreso ya fue registrado anteriormente en esta jornada.")
                             st.markdown(f"**Tiempo total asentado:** {df_asistencias.loc[idx[0], 'minutos_conectado']} minutos.")
+                            st.warning("🔒 Ya puede cerrar esta pestaña.")
+                            components.html("<script>window.close();</script>", height=0, width=0)
                 else:
-                    st.error("❌ No se encontró registro de 'Entrada' para este DNI. Verifique haber ingresado correctamente al inicio.")
+                    st.error("❌ No se encontró registro de 'Entrada' para este DNI.")
             else:
                 st.error("❌ Todavía no hay ninguna asistencia registrada el día de hoy.")
 
@@ -258,7 +263,11 @@ if boton_enviar:
                 with st.container(border=True):
                     st.info(f"ℹ️ **Ingreso ya registrado:**")
                     st.markdown(f"**Docente:** {datos_presente['apellido']}, {datos_presente['nombre']}")
-                    st.link_button("🚀 Volver a Entrar a la Sala Virtual", link_destino, type="primary", use_container_width=True)
+                    st.success("Redirecting... Abriendo la capacitación en una nueva pestaña.")
+                    
+                    # Abre la sala y avisa que puede cerrar el portal
+                    st.warning("👋 ¡Listo! Ya puede cerrar esta pestaña de acreditación.")
+                    components.html(f"<script>window.open('{link_destino}', '_blank'); window.close();</script>", height=0, width=0)
             else:
                 coincidencia_padron = df_total_habilitados[df_total_habilitados['dni'] == dni_ingresado]
                 
@@ -284,7 +293,11 @@ if boton_enviar:
                     
                     with st.container(border=True):
                         st.success(f"✅ **Acreditación Exitosa:** ¡Bienvenido/a, **{nombre_real} {apellido_real}**!")
-                        st.link_button("🚀 Acceder a la Sala Virtual", link_destino, type="primary", use_container_width=True)
+                        st.info("Abriendo la sala virtual de la capacitación...")
+                        st.warning("👋 Su asistencia fue guardada. Ya puede cerrar esta pestaña de acreditación.")
+                        
+                        # Abre la capacitación e intenta cerrar el portal en simultáneo
+                        components.html(f"<script>window.open('{link_destino}', '_blank'); window.close();</script>", height=0, width=0)
                 else:
                     st.session_state.mostrar_autoregistro = True
                     st.session_state.dni_pendiente = dni_ingresado
@@ -340,8 +353,10 @@ if st.session_state.mostrar_autoregistro and not es_modo_salida:
                 df_final.to_excel(EXCEL_ASISTENCIA, index=False)
                 
                 st.session_state.mostrar_autoregistro = False
-                st.success(f"🎉 ¡Alta exitosa! Bienvenido/a.")
-                st.link_button("🚀 Entrar a la Capacitación", link_destino, type="primary", use_container_width=True)
+                st.success(f"🎉 ¡Alta exitosa! Redireccionando...")
+                st.warning("👋 Registro completado. Ya puede cerrar esta pestaña de acreditación.")
+                
+                components.html(f"<script>window.open('{link_destino}', '_blank'); window.close();</script>", height=0, width=0)
                 st.rerun()
             else:
                 st.error("❌ Ambos campos son obligatorios.")
