@@ -53,8 +53,13 @@ def leer_asistencias_sheets():
         return pd.DataFrame(columns=["dni", "nombre", "apellido", "fecha_hora_entrada", "fecha_hora_salida", "minutos_conectado"])
 
 def guardar_asistencias_sheets(df_a_guardar):
+    # Aseguramos formato de texto limpio en los DNIs
     df_a_guardar["dni"] = df_a_guardar["dni"].astype(str).str.split('.').str[0].str.strip()
-    conn.update(data=df_a_guardar)
+    
+    # --- SOLUCIÓN CRÍTICA: Reemplazar nulos/NaN por strings vacíos antes de enviar ---
+    df_limpio = df_a_guardar.fillna("")
+    
+    conn.update(data=df_limpio)
 
 # --- MANEJO DEL LINK DINÁMICO ---
 def leer_link_actual():
