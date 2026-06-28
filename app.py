@@ -83,16 +83,11 @@ if password == "admin123":
     
     st.sidebar.markdown("---")
     
-    # --- NUEVA MEJORA: GENERACIÓN Y DESCARGA AUTOMÁTICA DEL QR DE SALIDA ---
+    # --- GENERACIÓN Y DESCARGA AUTOMÁTICA DEL QR DE SALIDA ---
     st.sidebar.subheader("🖼️ QR de Acreditación de Salida")
     
-    # Construcción dinámica de la URL de salida basándose en el dominio actual de la app
-    try:
-        url_base_app = st.get_option("browser.gatherUsageStats") # Intento de fallback seguro
-        # Alternativa estándar construida dinámicamente si estás en Streamlit Cloud
-        url_salida = "https://acreditacionvirtual.streamlit.app/?accion=salida"
-    except:
-        url_salida = "https://acreditacionvirtual.streamlit.app/?accion=salida"
+    # URL estandarizada para producción en Streamlit Cloud con su parámetro correspondiente
+    url_salida = "https://acreditacionvirtual.streamlit.app/?accion=salida"
         
     # Crear código QR en memoria
     qr = qrcode.QRCode(version=1, box_size=10, border=2)
@@ -100,15 +95,15 @@ if password == "admin123":
     qr.make(fit=True)
     img_qr = qr.make_image(fill_color="black", back_color="white")
     
-    # Guardar la imagen en un buffer de bytes para que Streamlit pueda ofrecer su descarga
+    # Guardar la imagen en un buffer de bytes para descarga
     buf_qr = io.BytesIO()
     img_qr.save(buf_qr, format="PNG")
     byte_im_qr = buf_qr.getvalue()
     
-    # Mostrar vista previa pequeña en el panel de soporte
+    # Vista previa pequeña en la barra lateral
     st.sidebar.image(byte_im_qr, caption="Escanear para registrar Egreso", width=150)
     
-    # Botón de descarga directa del QR
+    # Botón de descarga directa
     st.sidebar.download_button(
         label="📥 Descargar Imagen QR",
         data=byte_im_qr,
@@ -119,7 +114,7 @@ if password == "admin123":
     
     st.sidebar.markdown("---")
     
-    # Gestión de descargas del Excel y reinicio
+    # Gestión de descargas del Excel y reinicio seguro
     st.sidebar.subheader("📥 Gestión de Asistencias")
     if os.path.exists(EXCEL_ASISTENCIA):
         df_descarga = pd.read_excel(EXCEL_ASISTENCIA, dtype={"dni": str})
@@ -164,7 +159,6 @@ if password == "admin123":
 # ==========================================
 # INTERFAZ PÚBLICA DEL DOCENTE (DISEÑO ULTRA COMPACTO)
 # ==========================================
-# Usamos un formato en una sola línea para ahorrar espacio vertical crítico
 if es_modo_salida:
     st.markdown("## 🎓 Registro de Salida")
     st.markdown("Ingrese su DNI para **asentar su egreso** y calcular el tiempo total de permanencia.")
@@ -172,7 +166,7 @@ else:
     st.markdown("## 🎓 Portal de Acreditación Virtual")
     st.markdown("Ingrese su número de documento para validar su asistencia y habilitar el ingreso.")
 
-# Contenedor del formulario principal (Ajustado para evitar barras de desplazamiento)
+# Contenedor del formulario principal (Sin barras de desplazamiento)
 with st.container(border=True):
     with st.form("form_acreditacion", clear_on_submit=False):
         dni_ingresado = st.text_input("Número de DNI (sin puntos ni espacios)", max_chars=9, placeholder="Ej: 28444333")
@@ -191,16 +185,33 @@ if boton_enviar:
         ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         ahora_dt = datetime.now()
         
+        # -----------------------------------------------------------------
         # [MODO SALIDA]: Activado por el QR con ?accion=salida
+        # -----------------------------------------------------------------
         if es_modo_salida:
             if os.path.exists(EXCEL_ASISTENCIA):
                 df_asistencias = pd.read_excel(EXCEL_ASISTENCIA, dtype={"dni": str})
+                
+                # Escudo estructural: Corrige archivos creados con esquemas viejos en caliente
+                if "fecha_hora_entrada" not in df_asistencias.columns and "fecha_hora" in df_asistencias.columns:
+                    df_asistencias.rename(columns={"fecha_hora": "fecha_hora_entrada"}, inplace=True)
+                
+                # Inyección preventiva de columnas faltantes para evitar KeyErrors
+                for col in ["fecha_hora_entrada", "fecha_hora_salida", "minutos_conectado"]:
+                    if col not in df_asistencias.columns:
+                        df_asistencias[col] = None
+                
                 idx = df_asistencias[df_asistencias['dni'] == dni_ingresado].index
                 
                 if not idx.empty:
-                    if pd.isna(df_asistencias.loc[idx[0], "fecha_hora_salida"]):
+                    if pd.isna(df_asistencias.loc[idx[0], "fecha_hora_salida"]) or df_asistencias.loc[idx[0], "fecha_hora_salida"] == "":
                         entrada_str = df_asistencias.loc[idx[0], "fecha_hora_entrada"]
-                        entrada_dt = datetime.strptime(entrada_str, "%Y-%m-%d %H:%M:%S")
+                        
+                        if pd.isna(entrada_str):
+                            entrada_dt = ahora_dt
+                            df_asistencias.loc[idx[0], "fecha_hora_entrada"] = ahora_str
+                        else:
+                            entrada_dt = datetime.strptime(str(entrada_str), "%Y-%m-%d %H:%M:%S")
                         
                         diferencia = ahora_dt - entrada_dt
                         minutos_totales = round(diferencia.total_seconds() / 60, 1)
@@ -215,13 +226,15 @@ if boton_enviar:
                     else:
                         with st.container(border=True):
                             st.info("ℹ️ Su egreso ya fue registrado anteriormente en esta jornada.")
-                            st.markdown(f"**Tiempo total asentado:** {df_asistencias.loc[idx[0], 'minutos_conectado']} minutos.")
+                            st.markdown(f"**Tiempo total asentado:** {df_asistencias.loc[idx[0], 'minutos_conectado']} minutes.")
                 else:
                     st.error("❌ No se encontró registro de 'Entrada' para este DNI.")
             else:
                 st.error("❌ Todavía no hay ninguna asistencia registrada el día de hoy.")
 
+        # -----------------------------------------------------------------
         # [MODO ENTRADA]: Flujo normal de acreditación
+        # -----------------------------------------------------------------
         else:
             st.session_state.mostrar_autoregistro = False
             link_destino = leer_link_actual()
@@ -260,73 +273,4 @@ if boton_enviar:
                         "minutos_conectado": None
                     }])
                     
-                    if os.path.exists(EXCEL_ASISTENCIA):
-                        df_final = pd.concat([df_asistencias_viejas, nueva_asistencia], ignore_index=True)
-                    else:
-                        df_final = nueva_asistencia
-                    
-                    df_final.to_excel(EXCEL_ASISTENCIA, index=False)
-                    
-                    with st.container(border=True):
-                        st.success(f"✅ **Acreditación Exitosa:** ¡Bienvenido/a, **{nombre_real} {apellido_real}**!")
-                        st.link_button("🚀 Acceder a la Sala Virtual", link_destino, type="primary", use_container_width=True)
-                else:
-                    st.session_state.mostrar_autoregistro = True
-                    st.session_state.dni_pendiente = dni_ingresado
-
-
-# ==========================================
-# SECCIÓN CONDICIONAL: FORMULARIO DE AUTO-REGISTRO
-# ==========================================
-if st.session_state.mostrar_autoregistro and not es_modo_salida:
-    with st.container(border=True):
-        st.warning("⚠️ **DNI no encontrado.** Complete sus datos por única vez para darse de alta.")
-        with st.form("form_autoregistro"):
-            st.markdown(f"**Documento:** `{st.session_state.dni_pendiente}`")
-            col1, col2 = st.columns(2)
-            with col1:
-                auto_apellido = st.text_input("Apellido/s", placeholder="Ej: GOMEZ")
-            with col2:
-                auto_nombre = st.text_input("Nombre/s", placeholder="Ej: Juan Carlos")
-                
-            _, col_auto_btn, _ = st.columns([0.5, 2, 0.5])
-            with col_auto_btn:
-                boton_auto_guardar = st.form_submit_button("Confirmar Registro y Entrar", use_container_width=True)
-        
-        if boton_auto_guardar:
-            if auto_apellido and auto_nombre:
-                ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                ape_formateado = auto_apellido.strip().upper()
-                nom_formateado = auto_nombre.strip().title()
-                link_destino = leer_link_actual()
-                
-                docente_nuevo = pd.DataFrame([{
-                    "dni": st.session_state.dni_pendiente,
-                    "apellido": ape_formateado,
-                    "nombre": nom_formateado
-                }])
-                st.session_state.nuevos_docentes = pd.concat([st.session_state.nuevos_docentes, docente_nuevo], ignore_index=True)
-                
-                nueva_asistencia = pd.DataFrame([{
-                    "dni": st.session_state.dni_pendiente, 
-                    "nombre": nom_formateado, 
-                    "apellido": ape_formateado, 
-                    "fecha_hora_entrada": ahora_str,
-                    "fecha_hora_salida": None,
-                    "minutos_conectado": None
-                }])
-                
-                if os.path.exists(EXCEL_ASISTENCIA):
-                    df_asistencias_viejas = pd.read_excel(EXCEL_ASISTENCIA, dtype={"dni": str})
-                    df_final = pd.concat([df_asistencias_viejas, nueva_asistencia], ignore_index=True)
-                else:
-                    df_final = nueva_asistencia
-                
-                df_final.to_excel(EXCEL_ASISTENCIA, index=False)
-                
-                st.session_state.mostrar_autoregistro = False
-                st.success(f"🎉 ¡Alta exitosa! Bienvenido/a.")
-                st.link_button("🚀 Entrar a la Capacitación", link_destino, type="primary", use_container_width=True)
-                st.rerun()
-            else:
-                st.error("❌ Ambos campos son obligatorios.")
+                    if os.path.
