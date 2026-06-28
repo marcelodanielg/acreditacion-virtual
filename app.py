@@ -9,20 +9,28 @@ from PIL import Image
 # Configuración de la página con tema centrado y estética compacta
 st.set_page_config(page_title="Acreditación Virtual", page_icon="🎓", layout="centered")
 
-# Reducimos los márgenes superiores nativos de Streamlit y ocultamos TODOS los íconos e interfaces secundarias
+# Ocultamos de raíz TODOS los elementos flotantes de Streamlit y Streamlit Cloud (iconos, coronas, menús, etc.)
 st.markdown("""
     <style>
+        /* Reducir márgenes superiores */
         .block-container { padding-top: 1.5rem; padding-bottom: 1rem; }
-        footer {visibility: hidden;}
-        header {visibility: hidden;}
-        #MainMenu {visibility: hidden;}
-        .stAppDeployButton {display:none;}
-        [data-testid="stStatusWidget"] {display:none;}
+        
+        /* Ocultar interfaces nativas de Streamlit */
+        footer {visibility: hidden; display: none !important;}
+        header {visibility: hidden; display: none !important;}
+        #MainMenu {visibility: hidden; display: none !important;}
+        .stAppDeployButton {display:none !important;}
+        [data-testid="stStatusWidget"] {display:none !important;}
+        
+        /* Ocultar los botones flotantes de administración de Streamlit Cloud (esquina inferior derecha) */
+        iframe[title="Streamlit Cloud Toolbar"] {display: none !important; visibility: hidden !important;}
+        div[class*="viewerBadge"] {display: none !important; visibility: hidden !important;}
+        button[class*="StyledAppActionButton"] {display: none !important; visibility: hidden !important;}
+        div[data-testid="stDecoration"] {display: none !important;}
     </style>
 """, unsafe_allow_html=True)
 
 # --- LOGO DEL MINISTERIO DE EDUCACIÓN DE SAN JUAN ---
-# Se utiliza la URL del imagotipo oficial institucional
 URL_LOGO_MINISTERIO = "https://educacion.sanjuan.gob.ar/mesj/LinkClick.aspx?fileticket=w376Zbe_pXo%3d&portalid=4&language=es-AR"
 
 st.image(URL_LOGO_MINISTERIO, use_container_width=True)
@@ -60,7 +68,7 @@ if "mostrar_autoregistro" not in st.session_state:
 if "dni_pendiente" not in st.session_state:
     st.session_state.dni_pendiente = ""
 if "estado_flujo" not in st.session_state:
-    st.session_state.estado_flujo = "formulario"  # Estados: "formulario", "exito_entrada", "exito_salida"
+    st.session_state.estado_flujo = "formulario"
 if "datos_docente_actual" not in st.session_state:
     st.session_state.datos_docente_actual = {}
 
@@ -86,7 +94,6 @@ if password == "admin123":
     st.sidebar.success("Acceso concedido")
     st.sidebar.markdown("---")
     
-    # Enlace de la capacitación
     st.sidebar.subheader("🔗 Enlace de la Sala")
     link_actual = leer_link_actual()
     nuevo_link = st.sidebar.text_input("URL de Destino", value=link_actual)
@@ -98,7 +105,6 @@ if password == "admin123":
     
     st.sidebar.markdown("---")
     
-    # --- GENERACIÓN Y DESCARGA AUTOMÁTICA DEL QR DE SALIDA ---
     st.sidebar.subheader("🖼️ QR de Acreditación de Salida")
     url_salida = "https://acreditacionvirtual.streamlit.app/?accion=salida"
         
@@ -123,7 +129,6 @@ if password == "admin123":
     
     st.sidebar.markdown("---")
     
-    # Gestión de descargas del Excel y reinicio seguro
     st.sidebar.subheader("📥 Gestión de Asistencias")
     if os.path.exists(EXCEL_ASISTENCIA):
         df_descarga = pd.read_excel(EXCEL_ASISTENCIA, dtype={"dni": str})
@@ -216,9 +221,7 @@ if boton_enviar:
         ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         ahora_dt = datetime.now()
         
-        # -----------------------------------------------------------------
         # [MODO SALIDA]: Lógica de Egreso
-        # -----------------------------------------------------------------
         if es_modo_salida:
             if os.path.exists(EXCEL_ASISTENCIA):
                 df_asistencias = pd.read_excel(EXCEL_ASISTENCIA, dtype={"dni": str})
@@ -272,9 +275,7 @@ if boton_enviar:
             else:
                 st.error("❌ Todavía no hay ninguna asistencia registrada el día de hoy.")
 
-        # -----------------------------------------------------------------
         # [MODO ENTRADA]: Lógica de Ingreso
-        # -----------------------------------------------------------------
         else:
             st.session_state.mostrar_autoregistro = False
             ya_presente = False
