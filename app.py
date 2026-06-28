@@ -10,11 +10,21 @@ st.set_page_config(page_title="Acreditación Virtual", page_icon="🎓", layout=
 # Nombres de los archivos de datos en el servidor
 EXCEL_PADRON = "docentes.xlsx"
 EXCEL_ASISTENCIA = "asistencia_registrada.xlsx"
+ARCHIVO_LINK = "link_config.txt"
 
-# --- INICIALIZACIÓN DE ESTADOS ---
-if "link_conferencia" not in st.session_state:
-    st.session_state.link_conferencia = "https://us05web.zoom.us/j/82339060910?pwd=OFUzcg6wXPcSwPhwEl8fxdwa06yfYf.1"
+# --- MANEJO DEL LINK DINÁMICO ---
+def leer_link_actual():
+    if os.path.exists(ARCHIVO_LINK):
+        with open(ARCHIVO_LINK, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    # Link por defecto inicial si el archivo no existe todavía
+    return "https://ingrese-el-link-desde-el-panel-de-control.com"
 
+def guardar_nuevo_link(nuevo_url):
+    with open(ARCHIVO_LINK, "w", encoding="utf-8") as f:
+        f.write(nuevo_url.strip())
+
+# --- INICIALIZACIÓN DE ESTADOS DE INTERFAZ ---
 if "nuevos_docentes" not in st.session_state:
     st.session_state.nuevos_docentes = pd.DataFrame(columns=["dni", "apellido", "nombre"])
 
@@ -25,7 +35,7 @@ if "dni_pendiente" not in st.session_state:
 
 
 # 1. FUNCIÓN PARA CARGAR EL PADRÓN DESDE EXCEL
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=10)
 def cargar_padron():
     if os.path.exists(EXCEL_PADRON):
         return pd.read_excel(EXCEL_PADRON, dtype={"dni": str})
@@ -34,7 +44,7 @@ def cargar_padron():
 
 df_excel = cargar_padron()
 
-# Combinamos el Excel base con las altas dadas por soporte o auto-registro en vivo
+# Combinamos el Excel base con las altas dadas por el auto-registro en vivo
 df_total_habilitados = pd.concat([df_excel, st.session_state.nuevos_docentes], ignore_index=True)
 
 
@@ -49,10 +59,13 @@ if password == "admin123":
     
     # --- SECCIÓN: CONFIGURACIÓN DEL ENLACE EN VIVO ---
     st.sidebar.subheader("🔗 Configuración del Enlace")
-    nuevo_link = st.sidebar.text_input("Enlace de la Capacitación (Zoom/YT)", value=st.session_state.link_conferencia)
-    if nuevo_link != st.session_state.link_conferencia:
-        st.session_state.link_conferencia = nuevo_link
-        st.sidebar.info("¡Enlace actualizado para los docentes!")
+    link_actual = leer_link_actual()
+    nuevo_link = st.sidebar.text_input("Enlace de la Capacitación (Zoom/YT/Meet)", value=link_actual)
+    
+    if nuevo_link != link_actual:
+        guardar_nuevo_link(nuevo_link)
+        st.sidebar.success("¡Enlace actualizado e incorporado!")
+        st.rerun() # Fuerza la recarga inmediata para que impacte en toda la app
     
     st.sidebar.markdown("---")
     
@@ -74,29 +87,6 @@ if password == "admin123":
         )
     else:
         st.sidebar.warning("Aún no hay asistencias registradas.")
-        
-    st.sidebar.markdown("---")
-    
-    # --- SECCIÓN: ALTA MANUAL EN CALIENTE ---
-    st.sidebar.subheader("Registrar Nuevo Docente Manualmente")
-    with st.sidebar.form("alta_manual", clear_on_submit=True):
-        nuevo_dni = st.text_input("DNI (sin puntos)")
-        nuevo_ape = st.text_input("Apellido")
-        nuevo_nom = st.text_input("Nombre")
-        btn_guardar = st.form_submit_button("Habilitar Acceso")
-        
-        if btn_guardar:
-            if nuevo_dni and nuevo_ape and nuevo_nom:
-                nueva_fila = pd.DataFrame([{
-                    "dni": nuevo_dni.strip(), 
-                    "apellido": nuevo_ape.strip().upper(), 
-                    "nombre": nuevo_nom.strip().title()
-                }])
-                st.session_state.nuevos_docentes = pd.concat([st.session_state.nuevos_docentes, nueva_fila], ignore_index=True)
-                st.sidebar.success(f"🎓 Habilitado: {nuevo_ape}, {nuevo_nom}")
-                st.rerun()
-            else:
-                st.sidebar.error("Completá todos los campos")
 
 
 # ==========================================
@@ -105,7 +95,7 @@ if password == "admin123":
 st.title("🎓 Sistema de Acreditación Virtual")
 st.write("Ingresá tu número de documento para validar tu asistencia y recibir el enlace de acceso.")
 
-# Formulario simplificado: Solo pide el DNI
+# Formulario público
 with st.form("form_acreditacion"):
     dni_ingresado = st.text_input("Número de DNI (sin puntos)", max_chars=9)
     boton_enviar = st.form_submit_button("Validar e Ingresar")
@@ -118,7 +108,10 @@ if boton_enviar:
         st.session_state.mostrar_autoregistro = False
         dni_ingresado = dni_ingresado.strip()
         
-        # 1. CONTROL DE DUPLICADOS: Verificar si ya registró asistencia previa
+        # Leemos el link actual en tiempo real desde el archivo incorporado
+        link_destino = leer_link_actual()
+        
+        # 1. CONTROL DE DUPLICADOS
         ya_presente = False
         datos_presente = None
         
@@ -130,13 +123,12 @@ if boton_enviar:
                 datos_presente = coincidencia_asistencia.iloc[0]
 
         if ya_presente:
-            # Si ya se encuentra registrado, no duplica y da paso directo mostrando sus datos
             st.info(f"ℹ️ Ya registraste tu asistencia anteriormente.")
             st.markdown(f"**Datos registrados:** DNI: {dni_ingresado} | Docente: {datos_presente['apellido']}, {datos_presente['nombre']}")
-            st.link_button("🚀 Volver a entrar a la Capacitación", st.session_state.link_conferencia, type="primary", use_container_width=True)
+            st.link_button("🚀 Volver a entrar a la Capacitación", link_destino, type="primary", use_container_width=True)
             
         else:
-            # 2. VALIDACIÓN CONTRA EL PADRÓN (Si no tiene asistencia previa)
+            # 2. VALIDACIÓN CONTRA EL PADRÓN
             coincidencia_padron = df_total_habilitados[df_total_habilitados['dni'] == dni_ingresado]
             
             if not coincidencia_padron.empty:
@@ -144,7 +136,6 @@ if boton_enviar:
                 nombre_real = coincidencia_padron.iloc[0]['nombre']
                 ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 
-                # Guardar nueva asistencia
                 nueva_asistencia = pd.DataFrame([{
                     "dni": dni_ingresado, 
                     "nombre": nombre_real, 
@@ -161,9 +152,8 @@ if boton_enviar:
                 
                 st.success(f"✅ ¡Validación exitosa! Bienvenido/a, {nombre_real} {apellido_real}.")
                 st.markdown("### 📝 Asistencia asentada correctamente")
-                st.link_button("🚀 Entrar a la Capacitación", st.session_state.link_conferencia, type="primary", use_container_width=True)
+                st.link_button("🚀 Entrar a la Capacitación", link_destino, type="primary", use_container_width=True)
             else:
-                # Si el DNI no está en el padrón ni en asistencias, abre el auto-registro
                 st.session_state.mostrar_autoregistro = True
                 st.session_state.dni_pendiente = dni_ingresado
 
@@ -186,7 +176,9 @@ if st.session_state.mostrar_autoregistro:
                 ape_formateado = auto_apellido.strip().upper()
                 nom_formateado = auto_nombre.strip().title()
                 
-                # Añadir a la sesión para que el padrón lo reconozca si actualiza la página
+                # Leemos el link dinámico para el botón de auto-registro
+                link_destino = leer_link_actual()
+                
                 docente_nuevo = pd.DataFrame([{
                     "dni": st.session_state.dni_pendiente,
                     "apellido": ape_formateado,
@@ -194,7 +186,6 @@ if st.session_state.mostrar_autoregistro:
                 }])
                 st.session_state.nuevos_docentes = pd.concat([st.session_state.nuevos_docentes, docente_nuevo], ignore_index=True)
                 
-                # Escribir en el archivo de asistencias directamente
                 nueva_asistencia = pd.DataFrame([{
                     "dni": st.session_state.dni_pendiente, 
                     "nombre": nom_formateado, 
@@ -210,9 +201,8 @@ if st.session_state.mostrar_autoregistro:
                 
                 df_final.to_excel(EXCEL_ASISTENCIA, index=False)
                 
-                # Ocultar formulario de registro y dar la bienvenida
                 st.session_state.mostrar_autoregistro = False
                 st.success(f"🎉 ¡Registro exitoso! Bienvenido/a, {nom_formateado}.")
-                st.link_button("🚀 Entrar a la Capacitación", st.session_state.link_conferencia, type="primary", use_container_width=True)
+                st.link_button("🚀 Entrar a la Capacitación", link_destino, type="primary", use_container_width=True)
             else:
                 st.error("❌ Por favor, rellene ambos campos para poder proceder.")
