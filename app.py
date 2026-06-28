@@ -4,7 +4,7 @@ from datetime import datetime
 import os
 import io
 import qrcode
-from PIL import Image
+from streamlit_gsheets import GSheetsConnection
 
 # Configuración de la página con tema centrado y estética compacta
 st.set_page_config(page_title="Acreditación Virtual", page_icon="🎓", layout="centered")
@@ -36,12 +36,27 @@ URL_LOGO_MINISTERIO = "https://educacion.sanjuan.gob.ar/mesj/LinkClick.aspx?file
 st.image(URL_LOGO_MINISTERIO, use_container_width=True)
 st.markdown("---")
 
-# Nombres de los archivos de datos
+# Archivos locales secundarios
 EXCEL_PADRON = "docentes.xlsx"
-EXCEL_ASISTENCIA = "asistencia_registrada.xlsx"
 ARCHIVO_LINK = "link_config.txt"
 
-# --- MANEJO DEL LINK DINÁMICO CON VALIDACIÓN HTTP ---
+# --- CONEXIÓN DIRECTA CON GOOGLE SHEETS ---
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+def leer_asistencias_sheets():
+    try:
+        # Lee la pestaña principal de la hoja configurada en los secrets
+        return conn.read(ttl=0) # ttl=0 obliga a buscar datos frescos de Google siempre
+    except Exception:
+        # Si está vacía o da error inicial, retorna la estructura limpia
+        return pd.DataFrame(columns=["dni", "nombre", "apellido", "fecha_hora_entrada", "fecha_hora_salida", "minutos_conectado"])
+
+def guardar_asistencias_sheets(df_a_guardar):
+    # Asegura tipos string para evitar problemas de formato científico con los DNI
+    df_a_guardar["dni"] = df_a_guardar["dni"].astype(str)
+    conn.update(data=df_a_guardar)
+
+# --- MANEJO DEL LINK DINÁMICO ---
 def leer_link_actual():
     if os.path.exists(ARCHIVO_LINK):
         with open(ARCHIVO_LINK, "r", encoding="utf-8") as f:
@@ -55,7 +70,7 @@ def guardar_nuevo_link(nuevo_url):
     with open(ARCHIVO_LINK, "w", encoding="utf-8") as f:
         f.write(url_limpia)
 
-# --- DETECTAR MODO (ENTRADA O SALIDA) DESDE LA URL ---
+# --- DETECTAR MODO (ENTRADA O SALIDA) ---
 query_params = st.query_params
 es_modo_salida = query_params.get("accion") == "salida"
 
@@ -72,7 +87,7 @@ if "estado_flujo" not in st.session_state:
 if "datos_docente_actual" not in st.session_state:
     st.session_state.datos_docente_actual = {}
 
-# FUNCIÓN PARA CARGAR EL PADRÓN BASE
+# FUNCIÓN PARA CARGAR EL PADRÓN BASE LOCAL
 @st.cache_data(ttl=10)
 def cargar_padron():
     if os.path.exists(EXCEL_PADRON):
@@ -129,46 +144,31 @@ if password == "admin123":
     
     st.sidebar.markdown("---")
     
-    st.sidebar.subheader("📥 Gestión de Asistencias")
-    if os.path.exists(EXCEL_ASISTENCIA):
-        df_descarga = pd.read_excel(EXCEL_ASISTENCIA, dtype={"dni": str})
-        
-        total_presentes = len(df_descarga)
-        con_salida = df_descarga["fecha_hora_salida"].notna().sum() if "fecha_hora_salida" in df_descarga.columns else 0
-        
-        st.sidebar.markdown("### 📊 Indicadores en Vivo")
-        col_m1, col_m2 = st.sidebar.columns(2)
-        col_m1.metric("Ingresos", total_presentes)
-        col_m2.metric("Egresos", con_salida)
-        
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df_descarga.to_excel(writer, index=False, sheet_name='Presentes')
-        
-        st.sidebar.download_button(
-            label="📊 Descargar Reporte (Excel)",
-            data=buffer.getvalue(),
-            file_name=f"asistencia_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
-        
-        st.sidebar.markdown("---")
-        st.sidebar.warning("⚠️ Zona de Peligro")
-        confirmar_borrado = st.sidebar.checkbox("Confirmar eliminación permanente")
-        btn_reiniciar = st.sidebar.button("♻️ Reiniciar Base de Asistencias", type="secondary", use_container_width=True)
-        
-        if btn_reiniciar and confirmar_borrado:
-            try:
-                os.remove(EXCEL_ASISTENCIA)
-                st.session_state.nuevos_docentes = pd.DataFrame(columns=["dni", "apellido", "nombre"])
-                st.session_state.estado_flujo = "formulario"
-                st.sidebar.success("¡Base de datos limpia!")
-                st.rerun()
-            except Exception as e:
-                st.sidebar.error(f"Error: {e}")
-    else:
-        st.sidebar.info("Aún no se registran asistencias.")
+    st.sidebar.subheader("📥 Gestión de Planilla Cloud")
+    df_descarga = leer_asistencias_sheets()
+    
+    # Limpiamos filas completamente vacías que Sheets suele retornar
+    df_descarga = df_descarga.dropna(how='all')
+    
+    total_historico = len(df_descarga)
+    con_salida = df_descarga["fecha_hora_salida"].notna().sum() if "fecha_hora_salida" in df_descarga.columns else 0
+    
+    st.sidebar.markdown("### 📊 Indicadores en Google Sheets")
+    col_m1, col_m2 = st.sidebar.columns(2)
+    col_m1.metric("Total Ingresos", total_historico)
+    col_m2.metric("Total Egresos", con_salida)
+    
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        df_descarga.to_excel(writer, index=False, sheet_name='Historial_GoogleSheets')
+    
+    st.sidebar.download_button(
+        label="📊 Descargar Respaldo Local (Excel)",
+        data=buffer.getvalue(),
+        file_name=f"asistencias_sheets_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
 
 
 # ==========================================
@@ -221,115 +221,87 @@ if boton_enviar:
         ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         ahora_dt = datetime.now()
         
-        # [MODO SALIDA]: Lógica de Egreso
-        if es_modo_salida:
-            if os.path.exists(EXCEL_ASISTENCIA):
-                df_asistencias = pd.read_excel(EXCEL_ASISTENCIA, dtype={"dni": str})
-                
-                if "fecha_hora_entrada" not in df_asistencias.columns and "fecha_hora" in df_asistencias.columns:
-                    df_asistencias.rename(columns={"fecha_hora": "fecha_hora_entrada"}, inplace=True)
-                
-                for col in ["fecha_hora_entrada", "fecha_hora_salida", "minutos_conectado"]:
-                    if col not in df_asistencias.columns:
-                        df_asistencias[col] = None
-                
-                df_asistencias["fecha_hora_entrada"] = df_asistencias["fecha_hora_entrada"].astype(object)
-                df_asistencias["fecha_hora_salida"] = df_asistencias["fecha_hora_salida"].astype(object)
-                df_asistencias["minutos_conectado"] = df_asistencias["minutos_conectado"].astype(object)
-                
-                idx = df_asistencias[df_asistencias['dni'] == dni_ingresado].index
-                
-                if not idx.empty:
-                    val_salida = df_asistencias.loc[idx[0], "fecha_hora_salida"]
-                    if pd.isna(val_salida) or val_salida == "" or val_salida is None:
-                        entrada_str = df_asistencias.loc[idx[0], "fecha_hora_entrada"]
-                        
-                        if pd.isna(entrada_str) or entrada_str is None:
-                            entrada_dt = ahora_dt
-                            df_asistencias.at[idx[0], "fecha_hora_entrada"] = ahora_str
-                        else:
-                            entrada_dt = datetime.strptime(str(entrada_str), "%Y-%m-%d %H:%M:%S")
-                        
-                        diferencia = ahora_dt - entrada_dt
-                        minutos_totales = round(diferencia.total_seconds() / 60, 1)
-                        
-                        df_asistencias.at[idx[0], "fecha_hora_salida"] = ahora_str
-                        df_asistencias.at[idx[0], "minutos_conectado"] = minutos_totales
-                        df_asistencias.to_excel(EXCEL_ASISTENCIA, index=False)
-                        
-                        st.session_state.datos_docente_actual = {
-                            "nombre": df_asistencias.loc[idx[0], 'nombre'],
-                            "minutos": minutos_totales
-                        }
-                        st.session_state.estado_flujo = "exito_salida"
-                        st.rerun()
-                    else:
-                        st.session_state.datos_docente_actual = {
-                            "nombre": df_asistencias.loc[idx[0], 'nombre'],
-                            "minutos": df_asistencias.loc[idx[0], 'minutos_conectado']
-                        }
-                        st.session_state.estado_flujo = "exito_salida"
-                        st.rerun()
-                else:
-                    st.error("❌ No se encontró registro de 'Entrada' para este DNI.")
-            else:
-                st.error("❌ Todavía no hay ninguna asistencia registrada el día de hoy.")
+        # Traemos la base completa y fresca de Google Sheets
+        df_asistencias = leer_asistencias_sheets()
+        df_asistencias = df_asistencias.dropna(how='all')
+        df_asistencias["dni"] = df_asistencias["dni"].astype(str).str.split('.').str[0].str.strip()
 
-        # [MODO ENTRADA]: Lógica de Ingreso
+        # -----------------------------------------------------------------
+        # [MODO SALIDA]: Lógica de Egreso usando Google Sheets
+        # -----------------------------------------------------------------
+        if es_modo_salida:
+            idx = df_asistencias[(df_asistencias['dni'] == dni_ingresado) & (df_asistencias['fecha_hora_salida'].isna() | (df_asistencias['fecha_hora_salida'] == ""))].index
+            
+            if not idx.empty:
+                fila_objetivo = idx[-1]
+                entrada_str = df_asistencias.loc[fila_objetivo, "fecha_hora_entrada"]
+                
+                if pd.isna(entrada_str) or entrada_str == "":
+                    entrada_dt = ahora_dt
+                    df_asistencias.at[fila_objetivo, "fecha_hora_entrada"] = ahora_str
+                else:
+                    entrada_dt = datetime.strptime(str(entrada_str), "%Y-%m-%d %H:%M:%S")
+                
+                diferencia = ahora_dt - entrada_dt
+                minutos_totales = round(diferencia.total_seconds() / 60, 1)
+                
+                df_asistencias.at[fila_objetivo, "fecha_hora_salida"] = ahora_str
+                df_asistencias.at[fila_objetivo, "minutos_conectado"] = minutos_totales
+                
+                # Guardamos la actualización en la nube
+                guardar_asistencias_sheets(df_asistencias)
+                
+                st.session_state.datos_docente_actual = {
+                    "nombre": df_asistencias.loc[fila_objetivo, 'nombre'],
+                    "minutos": minutos_totales
+                }
+                st.session_state.estado_flujo = "exito_salida"
+                st.rerun()
+            else:
+                idx_historico = df_asistencias[df_asistencias['dni'] == dni_ingresado].index
+                if not idx_historico.empty:
+                    fila_h = idx_historico[-1]
+                    st.session_state.datos_docente_actual = {
+                        "nombre": df_asistencias.loc[fila_h, 'nombre'],
+                        "minutos": df_asistencias.loc[fila_h, 'minutos_conectado'] if not pd.isna(df_asistencias.loc[fila_h, 'minutos_conectado']) else 0
+                    }
+                    st.session_state.estado_flujo = "exito_salida"
+                    st.rerun()
+                else:
+                    st.error("❌ No se encontró ningún registro de 'Entrada' en la planilla de Google Sheets para este DNI.")
+
+        # -----------------------------------------------------------------
+        # [MODO ENTRADA]: Lógica de Ingreso usando Google Sheets
+        # -----------------------------------------------------------------
         else:
             st.session_state.mostrar_autoregistro = False
-            ya_presente = False
-            datos_presente = None
+            coincidencia_padron = df_total_habilitados[df_total_habilitados['dni'] == dni_ingresado]
             
-            if os.path.exists(EXCEL_ASISTENCIA):
-                df_asistencias_viejas = pd.read_excel(EXCEL_ASISTENCIA, dtype={"dni": str})
-                if "fecha_hora_entrada" not in df_asistencias_viejas.columns:
-                    df_asistencias_viejas.rename(columns={"fecha_hora": "fecha_hora_entrada"}, inplace=True)
+            if not coincidencia_padron.empty:
+                apellido_real = coincidencia_padron.iloc[0]['apellido']
+                nombre_real = coincidencia_padron.iloc[0]['nombre']
                 
-                coincidencia_asistencia = df_asistencias_viejas[df_asistencias_viejas['dni'] == dni_ingresado]
-                if not coincidencia_asistencia.empty:
-                    ya_presente = True
-                    datos_presente = coincidencia_asistencia.iloc[0]
-
-            if ya_presente:
+                nueva_asistencia = pd.DataFrame([{
+                    "dni": dni_ingresado, 
+                    "nombre": nombre_real, 
+                    "apellido": apellido_real, 
+                    "fecha_hora_entrada": ahora_str,
+                    "fecha_hora_salida": "",
+                    "minutos_conectado": ""
+                }])
+                
+                df_final = pd.concat([df_asistencias, nueva_asistencia], ignore_index=True)
+                guardar_asistencias_sheets(df_final)
+                
                 st.session_state.datos_docente_actual = {
-                    "nombre": datos_presente['nombre'],
-                    "apellido": datos_presente['apellido']
+                    "nombre": nombre_real,
+                    "apellido": apellido_real
                 }
                 st.session_state.estado_flujo = "exito_entrada"
                 st.rerun()
             else:
-                coincidencia_padron = df_total_habilitados[df_total_habilitados['dni'] == dni_ingresado]
-                
-                if not coincidencia_padron.empty:
-                    apellido_real = coincidencia_padron.iloc[0]['apellido']
-                    nombre_real = coincidencia_padron.iloc[0]['nombre']
-                    
-                    nueva_asistencia = pd.DataFrame([{
-                        "dni": dni_ingresado, 
-                        "nombre": nombre_real, 
-                        "apellido": apellido_real, 
-                        "fecha_hora_entrada": ahora_str,
-                        "fecha_hora_salida": None,
-                        "minutos_conectado": None
-                    }])
-                    
-                    if os.path.exists(EXCEL_ASISTENCIA):
-                        df_final = pd.concat([df_asistencias_viejas, nueva_asistencia], ignore_index=True)
-                    else:
-                        df_final = nueva_asistencia
-                    
-                    df_final.to_excel(EXCEL_ASISTENCIA, index=False)
-                    
-                    st.session_state.datos_docente_actual = {
-                        "nombre": nombre_real,
-                        "apellido": apellido_real
-                    }
-                    st.session_state.estado_flujo = "exito_entrada"
-                    st.rerun()
-                else:
-                    st.session_state.mostrar_autoregistro = True
-                    st.session_state.dni_pendiente = dni_ingresado
+                st.session_state.mostrar_autoregistro = True
+                st.session_state.dni_pendiente = dni_ingresado
 
 
 # ==========================================
@@ -363,22 +335,20 @@ if st.session_state.mostrar_autoregistro and not es_modo_salida:
                 }])
                 st.session_state.nuevos_docentes = pd.concat([st.session_state.nuevos_docentes, docente_nuevo], ignore_index=True)
                 
+                df_asistencias = leer_asistencias_sheets()
+                df_asistencias = df_asistencias.dropna(how='all')
+                
                 nueva_asistencia = pd.DataFrame([{
                     "dni": st.session_state.dni_pendiente, 
                     "nombre": nom_formateado, 
                     "apellido": ape_formateado, 
                     "fecha_hora_entrada": ahora_str,
-                    "fecha_hora_salida": None,
-                    "minutos_conectado": None
+                    "fecha_hora_salida": "",
+                    "minutos_conectado": ""
                 }])
                 
-                if os.path.exists(EXCEL_ASISTENCIA):
-                    df_asistencias_viejas = pd.read_excel(EXCEL_ASISTENCIA, dtype={"dni": str})
-                    df_final = pd.concat([df_asistencias_viejas, nueva_asistencia], ignore_index=True)
-                else:
-                    df_final = nueva_asistencia
-                
-                df_final.to_excel(EXCEL_ASISTENCIA, index=False)
+                df_final = pd.concat([df_asistencias, nueva_asistencia], ignore_index=True)
+                guardar_asistencias_sheets(df_final)
                 
                 st.session_state.mostrar_autoregistro = False
                 st.session_state.datos_docente_actual = {
