@@ -273,4 +273,73 @@ if boton_enviar:
                         "minutos_conectado": None
                     }])
                     
-                    if os.path.
+                    if os.path.exists(EXCEL_ASISTENCIA):
+                        df_final = pd.concat([df_asistencias_viejas, nueva_asistencia], ignore_index=True)
+                    else:
+                        df_final = nueva_asistencia
+                    
+                    df_final.to_excel(EXCEL_ASISTENCIA, index=False)
+                    
+                    with st.container(border=True):
+                        st.success(f"✅ **Acreditación Exitosa:** ¡Bienvenido/a, **{nombre_real} {apellido_real}**!")
+                        st.link_button("🚀 Acceder a la Sala Virtual", link_destino, type="primary", use_container_width=True)
+                else:
+                    st.session_state.mostrar_autoregistro = True
+                    st.session_state.dni_pendiente = dni_ingresado
+
+
+# ==========================================
+# SECCIÓN CONDICIONAL: FORMULARIO DE AUTO-REGISTRO
+# ==========================================
+if st.session_state.mostrar_autoregistro and not es_modo_salida:
+    with st.container(border=True):
+        st.warning("⚠️ **DNI no encontrado.** Complete sus datos por única vez para darse de alta.")
+        with st.form("form_autoregistro"):
+            st.markdown(f"**Documento:** `{st.session_state.dni_pendiente}`")
+            col1, col2 = st.columns(2)
+            with col1:
+                auto_apellido = st.text_input("Apellido/s", placeholder="Ej: GOMEZ")
+            with col2:
+                auto_nombre = st.text_input("Nombre/s", placeholder="Ej: Juan Carlos")
+                
+            _, col_auto_btn, _ = st.columns([0.5, 2, 0.5])
+            with col_auto_btn:
+                boton_auto_guardar = st.form_submit_button("Confirmar Registro y Entrar", use_container_width=True)
+        
+        if boton_auto_guardar:
+            if auto_apellido and auto_nombre:
+                ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                ape_formateado = auto_apellido.strip().upper()
+                nom_formateado = auto_nombre.strip().title()
+                link_destino = leer_link_actual()
+                
+                docente_nuevo = pd.DataFrame([{
+                    "dni": st.session_state.dni_pendiente,
+                    "apellido": ape_formateado,
+                    "nombre": nom_formateado
+                }])
+                st.session_state.nuevos_docentes = pd.concat([st.session_state.nuevos_docentes, docente_nuevo], ignore_index=True)
+                
+                nueva_asistencia = pd.DataFrame([{
+                    "dni": st.session_state.dni_pendiente, 
+                    "nombre": nom_formateado, 
+                    "apellido": ape_formateado, 
+                    "fecha_hora_entrada": ahora_str,
+                    "fecha_hora_salida": None,
+                    "minutos_conectado": None
+                }])
+                
+                if os.path.exists(EXCEL_ASISTENCIA):
+                    df_asistencias_viejas = pd.read_excel(EXCEL_ASISTENCIA, dtype={"dni": str})
+                    df_final = pd.concat([df_asistencias_viejas, nueva_asistencia], ignore_index=True)
+                else:
+                    df_final = nueva_asistencia
+                
+                df_final.to_excel(EXCEL_ASISTENCIA, index=False)
+                
+                st.session_state.mostrar_autoregistro = False
+                st.success(f"🎉 ¡Alta exitosa! Bienvenido/a.")
+                st.link_button("🚀 Entrar a la Capacitación", link_destino, type="primary", use_container_width=True)
+                st.rerun()
+            else:
+                st.error("❌ Ambos campos son obligatorios.")
