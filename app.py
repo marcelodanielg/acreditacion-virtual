@@ -44,44 +44,49 @@ ARCHIVO_LINK = "link_config.txt"
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def leer_asistencias_sheets():
+    columnas_base = ["dni", "nombre", "apellido", "fecha_hora_entrada", "fecha_hora_salida", "minutos_conectado"]
     try:
-        # Leemos ignorando la caché para tener datos en tiempo real
         df = conn.read(ttl=0)
         if df is None or df.empty:
-            return pd.DataFrame(columns=["dni", "nombre", "apellido", "fecha_hora_entrada", "fecha_hora_salida", "minutos_conectado"])
+            return pd.DataFrame(columns=columnas_base)
         
-        # Normalizamos encabezados a minúsculas para evitar errores de tipeo en el Sheets
+        # Normalizamos encabezados a minúsculas
         df.columns = [str(c).lower().strip() for c in df.columns]
+        
+        # Parche de seguridad: si falta alguna columna clave, la creamos vacía
+        for col in columnas_base:
+            if col not in df.columns:
+                df[col] = ""
+                
         return df
     except Exception:
-        return pd.DataFrame(columns=["dni", "nombre", "apellido", "fecha_hora_entrada", "fecha_hora_salida", "minutos_conectado"])
+        return pd.DataFrame(columns=columnas_base)
 
 def guardar_asistencias_sheets(df_a_guardar):
     try:
         # 1. Limpieza estricta de formatos
-        df_a_guardar["dni"] = df_a_guardar["dni"].astype(str).str.split('.').str[0].str.strip()
+        if "dni" in df_a_guardar.columns:
+            df_a_guardar["dni"] = df_a_guardar["dni"].astype(str).str.split('.').str[0].str.strip()
         
-        # 2. Descartamos filas completamente vacías y rellenamos nulos con texto vacío
+        # 2. Descartamos filas vacías
         df_limpio = df_a_guardar.dropna(subset=["dni", "nombre", "apellido"], how="all")
         df_limpio = df_limpio.fillna("")
         
-        # 3. Escritura cruda y directa por API (Plan seguro y tolerante a fallos)
+        # 3. Escritura cruda directa usando gspread (Fuerza la subida)
         client = conn.client
         spreadsheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
         sh = client.open_by_url(spreadsheet_url)
         ws = sh.get_worksheet(0)
         
-        # Convertimos el DataFrame a una lista de filas pura para Google Sheets
+        # Convertimos a formato matriz pura para Google
         lista_datos = [df_limpio.columns.tolist()] + df_limpio.values.tolist()
         
-        # Limpiamos e impactamos en un único bloque de red
         ws.clear()
         ws.update(lista_datos)
         st.toast("💾 ¡Sincronizado en Google Sheets con éxito!", icon="☁️")
         
     except Exception as e_critico:
         st.error(f"🚨 Error de escritura en Google Sheets: {e_critico}")
-        st.info("Por favor, verificá que el mail de tu Cuenta de Servicio tenga permisos de 'Editor' en el archivo de Sheets compartido.")
 
 # --- MANEJO DEL LINK DINÁMICO ---
 def leer_link_actual():
@@ -265,7 +270,9 @@ if boton_enviar:
         # Traemos la base limpia de Google Sheets
         df_asistencias = leer_asistencias_sheets()
         df_asistencias = df_asistencias.dropna(how='all')
-        df_asistencias["dni"] = df_asistencias["dni"].astype(str).str.split('.').str[0].str.strip()
+        
+        if "dni" in df_asistencias.columns and not df_asistencias.empty:
+            df_asistencias["dni"] = df_asistencias["dni"].astype(str).str.split('.').str[0].str.strip()
 
         # -----------------------------------------------------------------
         # [MODO SALIDA]: Lógica de Egreso
