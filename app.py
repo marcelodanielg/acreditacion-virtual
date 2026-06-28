@@ -12,14 +12,12 @@ EXCEL_PADRON = "docentes.xlsx"
 EXCEL_ASISTENCIA = "asistencia_registrada.xlsx"
 
 # --- INICIALIZACIÓN DE ESTADOS ---
-# Link de la capacitación por defecto (El Admin lo puede cambiar en vivo)
 if "link_conferencia" not in st.session_state:
     st.session_state.link_conferencia = "https://us05web.zoom.us/j/82339060910?pwd=OFUzcg6wXPcSwPhwEl8fxdwa06yfYf.1"
 
 if "nuevos_docentes" not in st.session_state:
     st.session_state.nuevos_docentes = pd.DataFrame(columns=["dni", "apellido", "nombre"])
 
-# Control para mostrar el formulario de auto-registro si no está en el padrón
 if "mostrar_autoregistro" not in st.session_state:
     st.session_state.mostrar_autoregistro = False
 if "dni_pendiente" not in st.session_state:
@@ -105,91 +103,102 @@ if password == "admin123":
 # INTERFAZ PÚBLICA DEL DOCENTE
 # ==========================================
 st.title("🎓 Sistema de Acreditación Virtual")
-st.write("Ingresá tus datos para validar tu asistencia y recibir el enlace de acceso.")
+st.write("Ingresá tu número de documento para validar tu asistencia y recibir el enlace de acceso.")
 
-# Formulario principal de validación
+# Formulario simplificado: Solo pide el DNI
 with st.form("form_acreditacion"):
     dni_ingresado = st.text_input("Número de DNI (sin puntos)", max_chars=9)
-    apellido_ingresado = st.text_input("Primer Apellido")
     boton_enviar = st.form_submit_button("Validar e Ingresar")
 
-# Procesamiento del formulario principal
+# Procesamiento de la acreditación
 if boton_enviar:
-    if not dni_ingresado or not apellido_ingresado:
-        st.error("⚠️ Por favor, completá ambos campos.")
+    if not dni_ingresado:
+        st.error("⚠️ Por favor, ingresá tu número de DNI.")
     else:
-        st.session_state.mostrar_autoregistro = False # Reset por si venía de un intento fallido
+        st.session_state.mostrar_autoregistro = False
         dni_ingresado = dni_ingresado.strip()
-        apellido_ingresado = apellido_ingresado.strip().lower()
         
-        # Validación contra el padrón unificado
-        coincidencia = df_total_habilitados[df_total_habilitados['dni'] == dni_ingresado]
+        # 1. CONTROL DE DUPLICADOS: Verificar si ya registró asistencia previa
+        ya_presente = False
+        datos_presente = None
         
-        if not coincidencia.empty:
-            apellido_real = str(coincidencia.iloc[0]['apellido']).lower()
-            nombre_real = coincidencia.iloc[0]['nombre']
+        if os.path.exists(EXCEL_ASISTENCIA):
+            df_asistencias_viejas = pd.read_excel(EXCEL_ASISTENCIA, dtype={"dni": str})
+            coincidencia_asistencia = df_asistencias_viejas[df_asistencias_viejas['dni'] == dni_ingresado]
+            if not coincidencia_asistencia.empty:
+                ya_presente = True
+                datos_presente = coincidencia_asistencia.iloc[0]
+
+        if ya_presente:
+            # Si ya se encuentra registrado, no duplica y da paso directo mostrando sus datos
+            st.info(f"ℹ️ Ya registraste tu asistencia anteriormente.")
+            st.markdown(f"**Datos registrados:** DNI: {dni_ingresado} | Docente: {datos_presente['apellido']}, {datos_presente['nombre']}")
+            st.link_button("🚀 Volver a entrar a la Capacitación", st.session_state.link_conferencia, type="primary", use_container_width=True)
             
-            if apellido_ingresado in apellido_real:
-                # --- REGISTRO DE ASISTENCIA ---
+        else:
+            # 2. VALIDACIÓN CONTRA EL PADRÓN (Si no tiene asistencia previa)
+            coincidencia_padron = df_total_habilitados[df_total_habilitados['dni'] == dni_ingresado]
+            
+            if not coincidencia_padron.empty:
+                apellido_real = coincidencia_padron.iloc[0]['apellido']
+                nombre_real = coincidencia_padron.iloc[0]['nombre']
                 ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                # Guardar nueva asistencia
                 nueva_asistencia = pd.DataFrame([{
                     "dni": dni_ingresado, 
                     "nombre": nombre_real, 
-                    "apellido": coincidencia.iloc[0]['apellido'], 
+                    "apellido": apellido_real, 
                     "fecha_hora": ahora
                 }])
                 
                 if os.path.exists(EXCEL_ASISTENCIA):
-                    df_asistencias_viejas = pd.read_excel(EXCEL_ASISTENCIA, dtype={"dni": str})
                     df_final = pd.concat([df_asistencias_viejas, nueva_asistencia], ignore_index=True)
                 else:
                     df_final = nueva_asistencia
                 
-                df_final.drop_duplicates(subset=["dni"], keep="first", inplace=True)
                 df_final.to_excel(EXCEL_ASISTENCIA, index=False)
                 
-                # Despliegue de datos cargados y acceso exitoso
-                st.success(f"✅ ¡Validación exitosa! Bienvenido/a, {nombre_real} {coincidencia.iloc[0]['apellido']}.")
-                st.markdown(f"**Datos del Padrón:** DNI: {dni_ingresado} | Docente: {coincidencia.iloc[0]['apellido']}, {nombre_real}")
+                st.success(f"✅ ¡Validación exitosa! Bienvenido/a, {nombre_real} {apellido_real}.")
                 st.markdown("### 📝 Asistencia asentada correctamente")
                 st.link_button("🚀 Entrar a la Capacitación", st.session_state.link_conferencia, type="primary", use_container_width=True)
             else:
-                st.error("❌ El apellido no coincide con el DNI ingresado.")
-        else:
-            # Si no se encuentra, activamos la vista de auto-registro
-            st.session_state.mostrar_autoregistro = True
-            st.session_state.dni_pendiente = dni_ingresado
+                # Si el DNI no está en el padrón ni en asistencias, abre el auto-registro
+                st.session_state.mostrar_autoregistro = True
+                st.session_state.dni_pendiente = dni_ingresado
 
 
 # ==========================================
-# SECCIÓN CONDICIONAL: AUTO-REGISTRO DE DOCENTES
+# SECCIÓN CONDICIONAL: AUTO-REGISTRO
 # ==========================================
 if st.session_state.mostrar_autoregistro:
-    st.warning("⚠️ El DNI ingresado no se encuentra en el padrón. Completá tus datos para registrarte e ingresar.")
+    st.warning("⚠️ Tu DNI no figura en el padrón institucional. Completá tus datos abajo para registrarte y acceder.")
     
     with st.form("form_autoregistro"):
         st.write(f"**DNI a registrar:** {st.session_state.dni_pendiente}")
         auto_apellido = st.text_input("Apellido Completo")
         auto_nombre = st.text_input("Nombres")
-        boton_auto_guardar = st.form_submit_button("Confirmar Registro e Ingresar")
+        boton_auto_guardar = st.form_submit_button("Confirmar Asistencia e Ingresar")
         
         if boton_auto_guardar:
             if auto_apellido and auto_nombre:
                 ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                ape_formateado = auto_apellido.strip().upper()
+                nom_formateado = auto_nombre.strip().title()
                 
-                # 1. Agregar a la lista interna en caliente para que el sistema ya lo reconozca
+                # Añadir a la sesión para que el padrón lo reconozca si actualiza la página
                 docente_nuevo = pd.DataFrame([{
                     "dni": st.session_state.dni_pendiente,
-                    "apellido": auto_apellido.strip().upper(),
-                    "nombre": auto_nombre.strip().title()
+                    "apellido": ape_formateado,
+                    "nombre": nom_formateado
                 }])
                 st.session_state.nuevos_docentes = pd.concat([st.session_state.nuevos_docentes, docente_nuevo], ignore_index=True)
                 
-                # 2. Registrar directamente en el Excel de Asistencias
+                # Escribir en el archivo de asistencias directamente
                 nueva_asistencia = pd.DataFrame([{
                     "dni": st.session_state.dni_pendiente, 
-                    "nombre": auto_nombre.strip().title(), 
-                    "apellido": auto_apellido.strip().upper(), 
+                    "nombre": nom_formateado, 
+                    "apellido": ape_formateado, 
                     "fecha_hora": ahora
                 }])
                 
@@ -199,15 +208,11 @@ if st.session_state.mostrar_autoregistro:
                 else:
                     df_final = nueva_asistencia
                 
-                df_final.drop_duplicates(subset=["dni"], keep="first", inplace=True)
                 df_final.to_excel(EXCEL_ASISTENCIA, index=False)
                 
-                # Resetear el estado de la UI y mostrar el link de acceso
+                # Ocultar formulario de registro y dar la bienvenida
                 st.session_state.mostrar_autoregistro = False
-                st.success(f"🎉 ¡Registro exitoso! Bienvenido/a, {auto_nombre.strip().title()}.")
+                st.success(f"🎉 ¡Registro exitoso! Bienvenido/a, {nom_formateado}.")
                 st.link_button("🚀 Entrar a la Capacitación", st.session_state.link_conferencia, type="primary", use_container_width=True)
-                
-                # Pequeña pausa para asegurar la visualización antes de limpiar con rerun opcional
-                # st.rerun()
             else:
                 st.error("❌ Por favor, rellene ambos campos para poder proceder.")
