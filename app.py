@@ -9,7 +9,7 @@ from streamlit_gsheets import GSheetsConnection
 # Configuración de la página con tema centrado y estética compacta
 st.set_page_config(page_title="Acreditación Virtual", page_icon="🎓", layout="centered")
 
-# Ocultamos de raíz TODOS los elementos flotantes de Streamlit y Streamlit Cloud (iconos, coronas, menús, etc.)
+# Ocultamos de raíz TODOS los elementos flotantes de Streamlit y Streamlit Cloud
 st.markdown("""
     <style>
         /* Reducir márgenes superiores */
@@ -22,7 +22,7 @@ st.markdown("""
         .stAppDeployButton {display:none !important;}
         [data-testid="stStatusWidget"] {display:none !important;}
         
-        /* Ocultar los botones flotantes de administración de Streamlit Cloud (esquina inferior derecha) */
+        /* Ocultar los botones flotantes de administración de Streamlit Cloud */
         iframe[title="Streamlit Cloud Toolbar"] {display: none !important; visibility: hidden !important;}
         div[class*="viewerBadge"] {display: none !important; visibility: hidden !important;}
         button[class*="StyledAppActionButton"] {display: none !important; visibility: hidden !important;}
@@ -45,15 +45,15 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 def leer_asistencias_sheets():
     try:
-        # Lee la pestaña principal de la hoja configurada en los secrets
-        return conn.read(ttl=0) # ttl=0 obliga a buscar datos frescos de Google siempre
+        df = conn.read(ttl=0)
+        if df is None or df.empty:
+            return pd.DataFrame(columns=["dni", "nombre", "apellido", "fecha_hora_entrada", "fecha_hora_salida", "minutos_conectado"])
+        return df
     except Exception:
-        # Si está vacía o da error inicial, retorna la estructura limpia
         return pd.DataFrame(columns=["dni", "nombre", "apellido", "fecha_hora_entrada", "fecha_hora_salida", "minutos_conectado"])
 
 def guardar_asistencias_sheets(df_a_guardar):
-    # Asegura tipos string para evitar problemas de formato científico con los DNI
-    df_a_guardar["dni"] = df_a_guardar["dni"].astype(str)
+    df_a_guardar["dni"] = df_a_guardar["dni"].astype(str).str.split('.').str[0].str.strip()
     conn.update(data=df_a_guardar)
 
 # --- MANEJO DEL LINK DINÁMICO ---
@@ -144,31 +144,45 @@ if password == "admin123":
     
     st.sidebar.markdown("---")
     
-    st.sidebar.subheader("📥 Gestión de Planilla Cloud")
+    st.sidebar.subheader("📥 Gestión de Asistencias Históricas")
     df_descarga = leer_asistencias_sheets()
-    
-    # Limpiamos filas completamente vacías que Sheets suele retornar
     df_descarga = df_descarga.dropna(how='all')
     
     total_historico = len(df_descarga)
     con_salida = df_descarga["fecha_hora_salida"].notna().sum() if "fecha_hora_salida" in df_descarga.columns else 0
     
-    st.sidebar.markdown("### 📊 Indicadores en Google Sheets")
+    st.sidebar.markdown("### 📊 Indicadores Acumulados")
     col_m1, col_m2 = st.sidebar.columns(2)
     col_m1.metric("Total Ingresos", total_historico)
     col_m2.metric("Total Egresos", con_salida)
     
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        df_descarga.to_excel(writer, index=False, sheet_name='Historial_GoogleSheets')
+        df_descarga.to_excel(writer, index=False, sheet_name='Historial_Asistencias')
     
     st.sidebar.download_button(
-        label="📊 Descargar Respaldo Local (Excel)",
+        label="📊 Descargar Reporte Histórico (Excel)",
         data=buffer.getvalue(),
-        file_name=f"asistencias_sheets_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+        file_name=f"historial_asistencia_acumulado.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
+    
+    st.sidebar.markdown("---")
+    st.sidebar.warning("⚠️ Zona de Peligro")
+    confirmar_borrado = st.sidebar.checkbox("Confirmar vaciado completo de la nube")
+    btn_reiniciar = st.sidebar.button("♻️ Vaciar Todo el Historial", type="secondary", use_container_width=True)
+    
+    if btn_reiniciar and confirmar_borrado:
+        try:
+            df_vacio = pd.DataFrame(columns=["dni", "nombre", "apellido", "fecha_hora_entrada", "fecha_hora_salida", "minutos_conectado"])
+            guardar_asistencias_sheets(df_vacio)
+            st.session_state.nuevos_docentes = pd.DataFrame(columns=["dni", "apellido", "nombre"])
+            st.session_state.estado_flujo = "formulario"
+            st.sidebar.success("¡Planilla Cloud vaciada por completo!")
+            st.rerun()
+        except Exception as e:
+            st.sidebar.error(f"Error: {e}")
 
 
 # ==========================================
@@ -181,7 +195,7 @@ if st.session_state.estado_flujo == "exito_entrada":
         st.markdown(f"### Bienvenido/a, **{st.session_state.datos_docente_actual.get('nombre')} {st.session_state.datos_docente_actual.get('apellido')}**")
         st.markdown("Presioná el siguiente botón para abrir la sala de la videoconferencia:")
         
-        st.link_button("🚀 INGRESAR A LA CAPACITACIÓN", link_destino, type="primary", use_container_width=True)
+        st.link_button("🚀 INGRESAR A LA LA SALA", link_destino, type="primary", use_container_width=True)
     st.stop()
 
 elif st.session_state.estado_flujo == "exito_salida":
@@ -221,13 +235,13 @@ if boton_enviar:
         ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         ahora_dt = datetime.now()
         
-        # Traemos la base completa y fresca de Google Sheets
+        # Traemos la base limpia de Google Sheets
         df_asistencias = leer_asistencias_sheets()
         df_asistencias = df_asistencias.dropna(how='all')
         df_asistencias["dni"] = df_asistencias["dni"].astype(str).str.split('.').str[0].str.strip()
 
         # -----------------------------------------------------------------
-        # [MODO SALIDA]: Lógica de Egreso usando Google Sheets
+        # [MODO SALIDA]: Lógica de Egreso
         # -----------------------------------------------------------------
         if es_modo_salida:
             idx = df_asistencias[(df_asistencias['dni'] == dni_ingresado) & (df_asistencias['fecha_hora_salida'].isna() | (df_asistencias['fecha_hora_salida'] == ""))].index
@@ -248,114 +262,10 @@ if boton_enviar:
                 df_asistencias.at[fila_objetivo, "fecha_hora_salida"] = ahora_str
                 df_asistencias.at[fila_objetivo, "minutos_conectado"] = minutos_totales
                 
-                # Guardamos la actualización en la nube
                 guardar_asistencias_sheets(df_asistencias)
                 
                 st.session_state.datos_docente_actual = {
                     "nombre": df_asistencias.loc[fila_objetivo, 'nombre'],
                     "minutos": minutos_totales
                 }
-                st.session_state.estado_flujo = "exito_salida"
-                st.rerun()
-            else:
-                idx_historico = df_asistencias[df_asistencias['dni'] == dni_ingresado].index
-                if not idx_historico.empty:
-                    fila_h = idx_historico[-1]
-                    st.session_state.datos_docente_actual = {
-                        "nombre": df_asistencias.loc[fila_h, 'nombre'],
-                        "minutos": df_asistencias.loc[fila_h, 'minutos_conectado'] if not pd.isna(df_asistencias.loc[fila_h, 'minutos_conectado']) else 0
-                    }
-                    st.session_state.estado_flujo = "exito_salida"
-                    st.rerun()
-                else:
-                    st.error("❌ No se encontró ningún registro de 'Entrada' en la planilla de Google Sheets para este DNI.")
-
-        # -----------------------------------------------------------------
-        # [MODO ENTRADA]: Lógica de Ingreso usando Google Sheets
-        # -----------------------------------------------------------------
-        else:
-            st.session_state.mostrar_autoregistro = False
-            coincidencia_padron = df_total_habilitados[df_total_habilitados['dni'] == dni_ingresado]
-            
-            if not coincidencia_padron.empty:
-                apellido_real = coincidencia_padron.iloc[0]['apellido']
-                nombre_real = coincidencia_padron.iloc[0]['nombre']
-                
-                nueva_asistencia = pd.DataFrame([{
-                    "dni": dni_ingresado, 
-                    "nombre": nombre_real, 
-                    "apellido": apellido_real, 
-                    "fecha_hora_entrada": ahora_str,
-                    "fecha_hora_salida": "",
-                    "minutos_conectado": ""
-                }])
-                
-                df_final = pd.concat([df_asistencias, nueva_asistencia], ignore_index=True)
-                guardar_asistencias_sheets(df_final)
-                
-                st.session_state.datos_docente_actual = {
-                    "nombre": nombre_real,
-                    "apellido": apellido_real
-                }
-                st.session_state.estado_flujo = "exito_entrada"
-                st.rerun()
-            else:
-                st.session_state.mostrar_autoregistro = True
-                st.session_state.dni_pendiente = dni_ingresado
-
-
-# ==========================================
-# SECCIÓN CONDICIONAL: FORMULARIO DE AUTO-REGISTRO
-# ==========================================
-if st.session_state.mostrar_autoregistro and not es_modo_salida:
-    with st.container(border=True):
-        st.warning("⚠️ **DNI no encontrado.** Complete sus datos por única vez para darse de alta.")
-        with st.form("form_autoregistro"):
-            st.markdown(f"**Documento:** `{st.session_state.dni_pendiente}`")
-            col1, col2 = st.columns(2)
-            with col1:
-                auto_apellido = st.text_input("Apellido/s", placeholder="Ej: GOMEZ")
-            with col2:
-                auto_nombre = st.text_input("Nombre/s", placeholder="Ej: Juan Carlos")
-                
-            _, col_auto_btn, _ = st.columns([0.5, 2, 0.5])
-            with col_auto_btn:
-                boton_auto_guardar = st.form_submit_button("Confirmar Registro y Entrar", use_container_width=True)
-        
-        if boton_auto_guardar:
-            if auto_apellido and auto_nombre:
-                ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                ape_formateado = auto_apellido.strip().upper()
-                nom_formateado = auto_nombre.strip().title()
-                
-                docente_nuevo = pd.DataFrame([{
-                    "dni": st.session_state.dni_pendiente,
-                    "apellido": ape_formateado,
-                    "nombre": nom_formateado
-                }])
-                st.session_state.nuevos_docentes = pd.concat([st.session_state.nuevos_docentes, docente_nuevo], ignore_index=True)
-                
-                df_asistencias = leer_asistencias_sheets()
-                df_asistencias = df_asistencias.dropna(how='all')
-                
-                nueva_asistencia = pd.DataFrame([{
-                    "dni": st.session_state.dni_pendiente, 
-                    "nombre": nom_formateado, 
-                    "apellido": ape_formateado, 
-                    "fecha_hora_entrada": ahora_str,
-                    "fecha_hora_salida": "",
-                    "minutos_conectado": ""
-                }])
-                
-                df_final = pd.concat([df_asistencias, nueva_asistencia], ignore_index=True)
-                guardar_asistencias_sheets(df_final)
-                
-                st.session_state.mostrar_autoregistro = False
-                st.session_state.datos_docente_actual = {
-                    "nombre": nom_formateado,
-                    "apellido": ape_formateado
-                }
-                st.session_state.estado_flujo = "exito_entrada"
-                st.rerun()
-            else:
-                st.error("❌ Ambos campos son obligatorios.")
+                st.session_state.estado_flujo = "
