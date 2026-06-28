@@ -195,7 +195,7 @@ if st.session_state.estado_flujo == "exito_entrada":
         st.markdown(f"### Bienvenido/a, **{st.session_state.datos_docente_actual.get('nombre')} {st.session_state.datos_docente_actual.get('apellido')}**")
         st.markdown("Presioná el siguiente botón para abrir la sala de la videoconferencia:")
         
-        st.link_button("🚀 INGRESAR A LA LA SALA", link_destino, type="primary", use_container_width=True)
+        st.link_button("🚀 INGRESAR A LA SALA", link_destino, type="primary", use_container_width=True)
     st.stop()
 
 elif st.session_state.estado_flujo == "exito_salida":
@@ -268,4 +268,107 @@ if boton_enviar:
                     "nombre": df_asistencias.loc[fila_objetivo, 'nombre'],
                     "minutos": minutos_totales
                 }
-                st.session_state.estado_flujo = "
+                st.session_state.estado_flujo = "exito_salida"
+                st.rerun()
+            else:
+                idx_historico = df_asistencias[df_asistencias['dni'] == dni_ingresado].index
+                if not idx_historico.empty:
+                    fila_h = idx_historico[-1]
+                    st.session_state.datos_docente_actual = {
+                        "nombre": df_asistencias.loc[fila_h, 'nombre'],
+                        "minutos": df_asistencias.loc[fila_h, 'minutos_conectado'] if not pd.isna(df_asistencias.loc[fila_h, 'minutos_conectado']) else 0
+                    }
+                    st.session_state.estado_flujo = "exito_salida"
+                    st.rerun()
+                else:
+                    st.error("❌ No se encontró ningún registro de 'Entrada' en la planilla de Google Sheets para este DNI.")
+
+        # -----------------------------------------------------------------
+        # [MODO ENTRADA]: Lógica de Ingreso
+        # -----------------------------------------------------------------
+        else:
+            st.session_state.mostrar_autoregistro = False
+            coincidencia_padron = df_total_habilitados[df_total_habilitados['dni'] == dni_ingresado]
+            
+            if not coincidencia_padron.empty:
+                apellido_real = coincidencia_padron.iloc[0]['apellido']
+                nombre_real = coincidencia_padron.iloc[0]['nombre']
+                
+                nueva_asistencia = pd.DataFrame([{
+                    "dni": dni_ingresado, 
+                    "nombre": nombre_real, 
+                    "apellido": apellido_real, 
+                    "fecha_hora_entrada": ahora_str,
+                    "fecha_hora_salida": "",
+                    "minutos_conectado": ""
+                }])
+                
+                df_final = pd.concat([df_asistencias, nueva_asistencia], ignore_index=True)
+                guardar_asistencias_sheets(df_final)
+                
+                st.session_state.datos_docente_actual = {
+                    "nombre": nombre_real,
+                    "apellido": apellido_real
+                }
+                st.session_state.estado_flujo = "exito_entrada"
+                st.rerun()
+            else:
+                st.session_state.mostrar_autoregistro = True
+                st.session_state.dni_pendiente = dni_ingresado
+
+
+# ==========================================
+# SECCIÓN CONDICIONAL: FORMULARIO DE AUTO-REGISTRO
+# ==========================================
+if st.session_state.mostrar_autoregistro and not es_modo_salida:
+    with st.container(border=True):
+        st.warning("⚠️ **DNI no encontrado.** Complete sus datos por única vez para darse de alta.")
+        with st.form("form_autoregistro"):
+            st.markdown(f"**Documento:** `{st.session_state.dni_pendiente}`")
+            col1, col2 = st.columns(2)
+            with col1:
+                auto_apellido = st.text_input("Apellido/s", placeholder="Ej: GOMEZ")
+            with col2:
+                auto_nombre = st.text_input("Nombre/s", placeholder="Ej: Juan Carlos")
+                
+            _, col_auto_btn, _ = st.columns([0.5, 2, 0.5])
+            with col_auto_btn:
+                boton_auto_guardar = st.form_submit_button("Confirmar Registro y Entrar", use_container_width=True)
+        
+        if boton_auto_guardar:
+            if auto_apellido and auto_nombre:
+                ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                ape_formateado = auto_apellido.strip().upper()
+                nom_formateado = auto_nombre.strip().title()
+                
+                docente_nuevo = pd.DataFrame([{
+                    "dni": st.session_state.dni_pendiente,
+                    "apellido": ape_formateado,
+                    "nombre": nom_formateado
+                }])
+                st.session_state.nuevos_docentes = pd.concat([st.session_state.nuevos_docentes, docente_nuevo], ignore_index=True)
+                
+                df_asistencias = leer_asistencias_sheets()
+                df_asistencias = df_asistencias.dropna(how='all')
+                
+                nueva_asistencia = pd.DataFrame([{
+                    "dni": st.session_state.dni_pendiente, 
+                    "nombre": nom_formateado, 
+                    "apellido": ape_formateado, 
+                    "fecha_hora_entrada": ahora_str,
+                    "fecha_hora_salida": "",
+                    "minutos_conectado": ""
+                }])
+                
+                df_final = pd.concat([df_asistencias, nueva_asistencia], ignore_index=True)
+                guardar_asistencias_sheets(df_final)
+                
+                st.session_state.mostrar_autoregistro = False
+                st.session_state.datos_docente_actual = {
+                    "nombre": nom_formateado,
+                    "apellido": ape_formateado
+                }
+                st.session_state.estado_flujo = "exito_entrada"
+                st.rerun()
+            else:
+                st.error("❌ Ambos campos son obligatorios.")
