@@ -9,11 +9,15 @@ from PIL import Image
 # Configuración de la página con tema centrado y estética compacta
 st.set_page_config(page_title="Acreditación Virtual", page_icon="🎓", layout="centered")
 
-# Reducimos los márgenes superiores nativos de Streamlit para evitar el scroll vertical
+# Reducimos los márgenes superiores nativos de Streamlit y ocultamos TODOS los íconos e interfaces secundarias
 st.markdown("""
     <style>
         .block-container { padding-top: 1.5rem; padding-bottom: 1rem; }
         footer {visibility: hidden;}
+        header {visibility: hidden;}
+        #MainMenu {visibility: hidden;}
+        .stAppDeployButton {display:none;}
+        [data-testid="stStatusWidget"] {display:none;}
     </style>
 """, unsafe_allow_html=True)
 
@@ -362,7 +366,7 @@ if st.session_state.mostrar_autoregistro and not es_modo_salida:
                     "dni": st.session_state.dni_pendiente, 
                     "nombre": nom_formateado, 
                     "apellido": ape_formateado, 
-                    "fecha_hora_entrada": ahor_str,
+                    "fecha_hora_entrada": ahora_str,
                     "fecha_hora_salida": None,
                     "minutos_conectado": None
                 }])
