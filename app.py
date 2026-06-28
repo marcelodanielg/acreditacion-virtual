@@ -85,25 +85,19 @@ if password == "admin123":
     
     # --- GENERACIÓN Y DESCARGA AUTOMÁTICA DEL QR DE SALIDA ---
     st.sidebar.subheader("🖼️ QR de Acreditación de Salida")
-    
-    # URL estandarizada para producción en Streamlit Cloud con su parámetro correspondiente
     url_salida = "https://acreditacionvirtual.streamlit.app/?accion=salida"
         
-    # Crear código QR en memoria
     qr = qrcode.QRCode(version=1, box_size=10, border=2)
     qr.add_data(url_salida)
     qr.make(fit=True)
     img_qr = qr.make_image(fill_color="black", back_color="white")
     
-    # Guardar la imagen en un buffer de bytes para descarga
     buf_qr = io.BytesIO()
     img_qr.save(buf_qr, format="PNG")
     byte_im_qr = buf_qr.getvalue()
     
-    # Vista previa pequeña en la barra lateral
     st.sidebar.image(byte_im_qr, caption="Escanear para registrar Egreso", width=150)
     
-    # Botón de descarga directa
     st.sidebar.download_button(
         label="📥 Descargar Imagen QR",
         data=byte_im_qr,
@@ -192,32 +186,40 @@ if boton_enviar:
             if os.path.exists(EXCEL_ASISTENCIA):
                 df_asistencias = pd.read_excel(EXCEL_ASISTENCIA, dtype={"dni": str})
                 
-                # Escudo estructural: Corrige archivos creados con esquemas viejos en caliente
+                # Escudo estructural para compatibilidad de esquemas
                 if "fecha_hora_entrada" not in df_asistencias.columns and "fecha_hora" in df_asistencias.columns:
                     df_asistencias.rename(columns={"fecha_hora": "fecha_hora_entrada"}, inplace=True)
                 
-                # Inyección preventiva de columnas faltantes para evitar KeyErrors
+                # Inyección preventiva: nos aseguramos que existan las columnas
                 for col in ["fecha_hora_entrada", "fecha_hora_salida", "minutos_conectado"]:
                     if col not in df_asistencias.columns:
                         df_asistencias[col] = None
                 
+                # --- SOLUCIÓN CRÍTICA AL TYPEERROR ---
+                # Forzamos las columnas a tipo "object" (string) para que admitan textos sin chistar
+                df_asistencias["fecha_hora_entrada"] = df_asistencias["fecha_hora_entrada"].astype(object)
+                df_asistencias["fecha_hora_salida"] = df_asistencias["fecha_hora_salida"].astype(object)
+                df_asistencias["minutos_conectado"] = df_asistencias["minutos_conectado"].astype(object)
+                
                 idx = df_asistencias[df_asistencias['dni'] == dni_ingresado].index
                 
                 if not idx.empty:
-                    if pd.isna(df_asistencias.loc[idx[0], "fecha_hora_salida"]) or df_asistencias.loc[idx[0], "fecha_hora_salida"] == "":
+                    val_salida = df_asistencias.loc[idx[0], "fecha_hora_salida"]
+                    if pd.isna(val_salida) or val_salida == "" or val_salida is None:
                         entrada_str = df_asistencias.loc[idx[0], "fecha_hora_entrada"]
                         
-                        if pd.isna(entrada_str):
+                        if pd.isna(entrada_str) or entrada_str is None:
                             entrada_dt = ahora_dt
-                            df_asistencias.loc[idx[0], "fecha_hora_entrada"] = ahora_str
+                            df_asistencias.at[idx[0], "fecha_hora_entrada"] = ahora_str
                         else:
                             entrada_dt = datetime.strptime(str(entrada_str), "%Y-%m-%d %H:%M:%S")
                         
                         diferencia = ahora_dt - entrada_dt
                         minutos_totales = round(diferencia.total_seconds() / 60, 1)
                         
-                        df_asistencias.loc[idx[0], "fecha_hora_salida"] = ahora_str
-                        df_asistencias.loc[idx[0], "minutos_conectado"] = minutos_totales
+                        # Guardado seguro usando .at para máxima precisión posicional
+                        df_asistencias.at[idx[0], "fecha_hora_salida"] = ahora_str
+                        df_asistencias.at[idx[0], "minutos_conectado"] = minutos_totales
                         df_asistencias.to_excel(EXCEL_ASISTENCIA, index=False)
                         
                         with st.container(border=True):
@@ -226,9 +228,9 @@ if boton_enviar:
                     else:
                         with st.container(border=True):
                             st.info("ℹ️ Su egreso ya fue registrado anteriormente en esta jornada.")
-                            st.markdown(f"**Tiempo total asentado:** {df_asistencias.loc[idx[0], 'minutos_conectado']} minutes.")
+                            st.markdown(f"**Tiempo total asentado:** {df_asistencias.loc[idx[0], 'minutos_conectado']} minutos.")
                 else:
-                    st.error("❌ No se encontró registro de 'Entrada' para este DNI.")
+                    st.error("❌ No se encontró registro de 'Entrada' para este DNI. Verifique haber ingresado correctamente al inicio.")
             else:
                 st.error("❌ Todavía no hay ninguna asistencia registrada el día de hoy.")
 
