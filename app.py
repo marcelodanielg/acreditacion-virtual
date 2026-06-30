@@ -9,22 +9,22 @@ from PIL import Image
 # Configuración de la página con tema centrado y estética compacta
 st.set_page_config(page_title="Acreditación Virtual", page_icon="🎓", layout="centered")
 
-# CSS Avanzado y ultra-compacto para forzar todo en una pantalla con logo grande
+# CSS definitivo: Logo muy grande y márgenes internos en su mínima expresión
 st.markdown("""
     <style>
-        /* Reducir al mínimo los márgenes del contenedor general */
-        .block-container { padding-top: 0.8rem !important; padding-bottom: 0rem !important; }
+        /* Reducir al extremo los márgenes de la página */
+        .block-container { padding-top: 0.5rem !important; padding-bottom: 0rem !important; }
         
-        /* Reducir márgenes de títulos para ahorrar espacio vertical */
-        h2 { margin-top: 0.2rem !important; margin-bottom: 0.2rem !important; font-size: 1.8rem !important; }
-        p { margin-bottom: 0.4rem !important; }
+        /* Ajustar espaciado de textos y títulos */
+        h2 { margin-top: 0.1rem !important; margin-bottom: 0.1rem !important; font-size: 1.7rem !important; }
+        p { margin-bottom: 0.3rem !important; font-size: 0.95rem !important; }
         
-        /* Compactar drásticamente el espacio interno del formulario */
-        div[data-testid="stForm"] { padding: 0.8rem !important; margin-bottom: 0rem !important; }
-        div[data-testid="stVerticalBlock"] > div { padding-bottom: 0.1rem !important; }
+        /* Compactar la caja del formulario */
+        div[data-testid="stForm"] { padding: 0.7rem !important; margin-bottom: 0rem !important; }
+        div[data-testid="stVerticalBlock"] > div { padding-bottom: 0.05rem !important; }
         
-        /* Líneas divisorias hiper-delgadas */
-        hr { margin-top: 0.4rem !important; margin-bottom: 0.4rem !important; }
+        /* Línea divisoria minimalista */
+        hr { margin-top: 0.3rem !important; margin-bottom: 0.3rem !important; }
         
         /* Ocultar interfaces nativas de Streamlit */
         footer {visibility: hidden; display: none !important;}
@@ -44,10 +44,10 @@ st.markdown("""
 # --- LOGO DEL MINISTERIO DE EDUCACIÓN DE SAN JUAN ---
 URL_LOGO_MINISTERIO = "image_587576.png"
 
-# Logo más grande (width=320) centrado perfectamente mediante columnas balanceadas
-col_logo_1, col_logo_2, col_logo_3 = st.columns([0.8, 2.4, 0.8])
+# Columnas laterales muy delgadas para que el logo ocupe el máximo espacio central disponible de forma gigante
+col_logo_1, col_logo_2, col_logo_3 = st.columns([0.2, 3.6, 0.2])
 with col_logo_2:
-    st.image(URL_LOGO_MINISTERIO, width=320)
+    st.image(URL_LOGO_MINISTERIO, use_container_width=True)
 
 st.markdown("---")
 
@@ -252,7 +252,6 @@ else:
     st.markdown("## 🎓 Portal de Acreditación Virtual")
     st.markdown("Ingrese su número de documento para validar su asistencia e ingresar.")
 
-# Quitamos el st.container exterior sobrante para maximizar la eficiencia del espacio vertical
 with st.form("form_acreditacion", clear_on_submit=False):
     dni_ingresado = st.text_input("Número de DNI (sin puntos ni espacios)", max_chars=9, placeholder="Ej: 28444333")
     
