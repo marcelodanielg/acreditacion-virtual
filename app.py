@@ -31,7 +31,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- LOGO DEL MINISTERIO DE EDUCACIÓN DE SAN JUAN ---
-URL_LOGO_MINISTERIO = "https://educacion.sanjuan.gob.ar/mesj/LinkClick.aspx?fileticket=w376Zbe_pXo%3d&portalid=4&language=es-AR"
+# Se utiliza el archivo local proporcionado por el usuario
+URL_LOGO_MINISTERIO = "image_587576.png"
 
 st.image(URL_LOGO_MINISTERIO, use_container_width=True)
 st.markdown("---")
@@ -110,7 +111,7 @@ if password == "admin123":
     st.sidebar.success("Acceso concedido")
     st.sidebar.markdown("---")
     
-    # NUEVO: Interruptor para activar o desactivar el acceso público
+    # Interruptor para activar o desactivar el acceso público
     st.sidebar.subheader("⚙️ Control del Sistema")
     estado_switch = st.sidebar.toggle("Habilitar Acreditación Pública", value=programa_activo)
     if estado_switch != programa_activo:
@@ -218,7 +219,7 @@ if st.session_state.estado_flujo == "exito_entrada":
     with st.container(border=True):
         st.success(f"✅ **¡Acreditación Guardada Impecable!**")
         st.markdown(f"### Bienvenido/a, **{st.session_state.datos_docente_actual.get('nombre')} {st.session_state.datos_docente_actual.get('apellido')}**")
-        st.markdown("Presioná el Caucasian siguiente botón para abrir la sala de la videoconferencia:")
+        st.markdown("Presioná el siguiente botón para abrir la sala de la videoconferencia:")
         
         st.link_button("🚀 INGRESAR A LA CAPACITACIÓN", link_destino, type="primary", use_container_width=True)
     st.stop()
