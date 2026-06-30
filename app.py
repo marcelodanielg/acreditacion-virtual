@@ -40,6 +40,7 @@ st.markdown("---")
 EXCEL_PADRON = "docentes.xlsx"
 EXCEL_ASISTENCIA = "asistencia_registrada.xlsx"
 ARCHIVO_LINK = "link_config.txt"
+ARCHIVO_ESTADO = "estado_programa.txt"  # Archivo para persistir si está activo o no
 
 # --- MANEJO DEL LINK DINÁMICO CON VALIDACIÓN HTTP ---
 def leer_link_actual():
@@ -54,6 +55,18 @@ def guardar_nuevo_link(nuevo_url):
         url_limpia = "https://" + url_limpia
     with open(ARCHIVO_LINK, "w", encoding="utf-8") as f:
         f.write(url_limpia)
+
+# --- MANEJO DEL ESTADO DEL PROGRAMA (ACTIVO/DESACTIVADO) ---
+def leer_estado_programa():
+    if os.path.exists(ARCHIVO_ESTADO):
+        with open(ARCHIVO_ESTADO, "r", encoding="utf-8") as f:
+            return f.read().strip() == "ACTIVO"
+    return True  # Por defecto activo si no existe el archivo
+
+def guardar_estado_programa(activo):
+    estado = "ACTIVO" if activo else "DESACTIVADO"
+    with open(ARCHIVO_ESTADO, "w", encoding="utf-8") as f:
+        f.write(estado)
 
 # --- DETECTAR MODO (ENTRADA O SALIDA) DESDE LA URL ---
 query_params = st.query_params
@@ -90,8 +103,21 @@ df_total_habilitados = pd.concat([df_excel, st.session_state.nuevos_docentes], i
 st.sidebar.markdown("## 🔐 Panel de Soporte")
 password = st.sidebar.text_input("Contraseña de Acceso", type="password")
 
+# Leer el estado actual del programa desde el archivo
+programa_activo = leer_estado_programa()
+
 if password == "admin123":
     st.sidebar.success("Acceso concedido")
+    st.sidebar.markdown("---")
+    
+    # NUEVO: Interruptor para activar o desactivar el acceso público
+    st.sidebar.subheader("⚙️ Control del Sistema")
+    estado_switch = st.sidebar.toggle("Habilitar Acreditación Pública", value=programa_activo)
+    if estado_switch != programa_activo:
+        guardar_estado_programa(estado_switch)
+        st.sidebar.toast(f"Sistema {'ACTIVADO' if estado_switch else 'DESACTIVADO'}")
+        st.rerun()
+        
     st.sidebar.markdown("---")
     
     st.sidebar.subheader("🔗 Enlace de la Sala")
@@ -172,6 +198,19 @@ if password == "admin123":
 
 
 # ==========================================
+# VALIDACIÓN DE ESTADO DE PROGRAMA (VISTA PÚBLICA)
+# ==========================================
+if not programa_activo:
+    with st.container(border=True):
+        st.warning("⏳ **El portal de acreditación se encuentra temporalmente cerrado.**")
+        st.markdown("""
+            El formulario de ingreso y egreso se habilitará unos minutos antes del horario estipulado 
+            para el inicio de la capacitación. Por favor, aguarde en esta página o reintente más tarde.
+        """)
+    st.stop()
+
+
+# ==========================================
 # PANTALLAS DE ÉXITO
 # ==========================================
 if st.session_state.estado_flujo == "exito_entrada":
@@ -179,7 +218,7 @@ if st.session_state.estado_flujo == "exito_entrada":
     with st.container(border=True):
         st.success(f"✅ **¡Acreditación Guardada Impecable!**")
         st.markdown(f"### Bienvenido/a, **{st.session_state.datos_docente_actual.get('nombre')} {st.session_state.datos_docente_actual.get('apellido')}**")
-        st.markdown("Presioná el siguiente botón para abrir la sala de la videoconferencia:")
+        st.markdown("Presioná el Caucasian siguiente botón para abrir la sala de la videoconferencia:")
         
         st.link_button("🚀 INGRESAR A LA CAPACITACIÓN", link_destino, type="primary", use_container_width=True)
     st.stop()
