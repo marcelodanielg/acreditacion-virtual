@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import os
 import io
 import qrcode
@@ -40,6 +40,12 @@ st.markdown("""
         div[data-testid="stDecoration"] {display: none !important;}
     </style>
 """, unsafe_allow_html=True)
+
+# --- FUNCIÓN GLOBAL PARA OBTENER LA HORA DE ARGENTINA (GMT-3) ---
+def obtener_hora_argentina():
+    # Creamos de manera nativa la zona horaria UTC-3 sin dependencias externas
+    tz_arg = timezone(timedelta(hours=-3))
+    return datetime.now(tz_arg)
 
 # --- LOGO DEL MINISTERIO DE EDUCACIÓN DE SAN JUAN ---
 URL_LOGO_MINISTERIO = "image_587576.png"
@@ -188,7 +194,7 @@ if password == "admin123":
         st.sidebar.download_button(
             label="📊 Descargar Reporte (Excel)",
             data=buffer.getvalue(),
-            file_name=f"asistencia_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+            file_name=f"asistencia_{obtener_hora_argentina().strftime('%Y-%m-%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
@@ -265,8 +271,10 @@ if boton_enviar:
         st.error("⚠️ Por favor, ingrese un número de DNI válido.")
     else:
         dni_ingresado = dni_ingresado.strip()
-        ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        ahora_dt = datetime.now()
+        
+        # Obtenemos la fecha y hora configurada en la zona horaria correcta de Argentina
+        ahora_dt = obtener_hora_argentina()
+        ahora_str = ahora_dt.strftime("%Y-%m-%d %H:%M:%S")
         
         # [MODO SALIDA]: Lógica de Egreso
         if es_modo_salida:
@@ -295,7 +303,13 @@ if boton_enviar:
                             entrada_dt = ahora_dt
                             df_asistencias.at[idx[0], "fecha_hora_entrada"] = ahora_str
                         else:
-                            entrada_dt = datetime.strptime(str(entrada_str), "%Y-%m-%d %H:%M:%S")
+                            # Reconstruimos la fecha de entrada como "naive" u offset-aware dependiendo del string guardado
+                            try:
+                                entrada_dt = datetime.strptime(str(entrada_str), "%Y-%m-%d %H:%M:%S")
+                                # Le asignamos la misma zona horaria para poder restar sin errores de tipos
+                                entrada_dt = entrada_dt.replace(tzinfo=timezone(timedelta(hours=-3)))
+                            except:
+                                entrada_dt = ahora_dt
                         
                         diferencia = ahora_dt - entrada_dt
                         minutos_totales = round(diferencia.total_seconds() / 60, 1)
@@ -399,7 +413,7 @@ if st.session_state.mostrar_autoregistro and not es_modo_salida:
         
         if boton_auto_guardar:
             if auto_apellido and auto_nombre:
-                ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                ahora_str = obtener_hora_argentina().strftime("%Y-%m-%d %H:%M:%S")
                 ape_formateado = auto_apellido.strip().upper()
                 nom_formateado = auto_nombre.strip().title()
                 
