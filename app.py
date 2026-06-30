@@ -9,11 +9,14 @@ from PIL import Image
 # Configuración de la página con tema centrado y estética compacta
 st.set_page_config(page_title="Acreditación Virtual", page_icon="🎓", layout="centered")
 
-# Ocultamos de raíz TODOS los elementos flotantes de Streamlit y Streamlit Cloud (iconos, coronas, menús, etc.)
+# Ocultamos de raíz los elementos de Streamlit y compactamos los márgenes al máximo
 st.markdown("""
     <style>
-        /* Reducir márgenes superiores */
-        .block-container { padding-top: 1.5rem; padding-bottom: 1rem; }
+        /* Reducir márgenes superiores e inferiores del contenedor principal */
+        .block-container { padding-top: 1rem; padding-bottom: 0rem; }
+        
+        /* Achicar el espacio de las líneas divisorias <hr> */
+        hr { margin-top: 0.5rem !important; margin-bottom: 0.5rem !important; }
         
         /* Ocultar interfaces nativas de Streamlit */
         footer {visibility: hidden; display: none !important;}
@@ -22,7 +25,7 @@ st.markdown("""
         .stAppDeployButton {display:none !important;}
         [data-testid="stStatusWidget"] {display:none !important;}
         
-        /* Ocultar los botones flotantes de administración de Streamlit Cloud (esquina inferior derecha) */
+        /* Ocultar los botones flotantes de administración de Streamlit Cloud */
         iframe[title="Streamlit Cloud Toolbar"] {display: none !important; visibility: hidden !important;}
         div[class*="viewerBadge"] {display: none !important; visibility: hidden !important;}
         button[class*="StyledAppActionButton"] {display: none !important; visibility: hidden !important;}
@@ -31,10 +34,13 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- LOGO DEL MINISTERIO DE EDUCACIÓN DE SAN JUAN ---
-# Se utiliza el archivo local proporcionado por el usuario
 URL_LOGO_MINISTERIO = "image_587576.png"
 
-st.image(URL_LOGO_MINISTERIO, use_container_width=True)
+# Logo más compacto (width=180) y centrado para ahorrar espacio vertical
+col_logo_1, col_logo_2, col_logo_3 = st.columns([1.2, 1.6, 1.2])
+with col_logo_2:
+    st.image(URL_LOGO_MINISTERIO, width=180)
+
 st.markdown("---")
 
 # Nombres de los archivos de datos
@@ -203,11 +209,8 @@ if password == "admin123":
 # ==========================================
 if not programa_activo:
     with st.container(border=True):
-        st.warning("⏳ **El portal de acreditación se encuentra temporalmente cerrado.**")
-        st.markdown("""
-            El formulario de ingreso y egreso se habilitará unos minutos antes del horario estipulado 
-            para el inicio de la capacitación. Por favor, aguarde en esta página o reintente más tarde.
-        """)
+        st.warning("⏳ **El portal de acreditación se encuentra de momento cerrado.**")
+        st.markdown("El formulario se habilitará unos minutos antes del inicio de la capacitación. Por favor, aguarde en esta página.")
     st.stop()
 
 
@@ -217,20 +220,18 @@ if not programa_activo:
 if st.session_state.estado_flujo == "exito_entrada":
     link_destino = leer_link_actual()
     with st.container(border=True):
-        st.success(f"✅ **¡Acreditación Guardada Impecable!**")
+        st.success("✅ **¡Acreditación Guardada Impecable!**")
         st.markdown(f"### Bienvenido/a, **{st.session_state.datos_docente_actual.get('nombre')} {st.session_state.datos_docente_actual.get('apellido')}**")
         st.markdown("Presioná el siguiente botón para abrir la sala de la videoconferencia:")
-        
         st.link_button("🚀 INGRESAR A LA CAPACITACIÓN", link_destino, type="primary", use_container_width=True)
     st.stop()
 
 elif st.session_state.estado_flujo == "exito_salida":
     with st.container(border=True):
-        st.success(f"📥 **¡Egreso Asentado con Éxito!**")
+        st.success("📥 **¡Egreso Asentado con Éxito!**")
         st.markdown(f"### Muchas gracias por participar, **{st.session_state.datos_docente_actual.get('nombre')}**.")
         st.markdown(f"⏱️ **Tiempo final de permanencia:** {st.session_state.datos_docente_actual.get('minutos')} minutos.")
-        
-        st.info("🔒 **Tu asistencia de cierre ha sido procesada de forma segura.** Ya podés cerrar o salir de este sitio en tu navegador.")
+        st.info("🔒 **Tu asistencia de cierre ha sido procesada de forma segura.** Ya podés cerrar esta pestaña.")
     st.stop()
 
 
@@ -239,16 +240,16 @@ elif st.session_state.estado_flujo == "exito_salida":
 # ==========================================
 if es_modo_salida:
     st.markdown("## 🎓 Registro de Salida")
-    st.markdown("Ingrese su DNI para **asentar su egreso** y calcular el tiempo total de permanencia.")
+    st.markdown("Ingrese su DNI para **asentar su egreso** y calcular el tiempo de permanencia.")
 else:
     st.markdown("## 🎓 Portal de Acreditación Virtual")
-    st.markdown("Ingrese su número de documento para validar su asistencia y habilitar el ingreso.")
+    st.markdown("Ingrese su número de documento para validar su asistencia e ingresar.")
 
 with st.container(border=True):
     with st.form("form_acreditacion", clear_on_submit=False):
         dni_ingresado = st.text_input("Número de DNI (sin puntos ni espacios)", max_chars=9, placeholder="Ej: 28444333")
         
-        _, col_btn, _ = st.columns([0.5, 2, 0.5])
+        _, col_btn, _ = st.columns([0.4, 2, 0.4])
         with col_btn:
             texto_boton = "Confirmar Egreso 📤" if es_modo_salida else "Validar e Ingresar a la Sala 🚀"
             boton_enviar = st.form_submit_button(texto_boton, use_container_width=True)
