@@ -9,18 +9,22 @@ from PIL import Image
 # Configuración de la página con tema centrado y estética compacta
 st.set_page_config(page_title="Acreditación Virtual", page_icon="🎓", layout="centered")
 
-# CSS optimizado al máximo para balancear el tamaño del logo y forzar una sola página
+# CSS Avanzado y ultra-compacto para forzar todo en una pantalla con logo grande
 st.markdown("""
     <style>
-        /* Reducir márgenes del contenedor principal */
-        .block-container { padding-top: 1rem; padding-bottom: 0rem; }
+        /* Reducir al mínimo los márgenes del contenedor general */
+        .block-container { padding-top: 0.8rem !important; padding-bottom: 0rem !important; }
         
-        /* Compactar el espacio interno de los formularios y contenedores */
-        div[data-testid="stForm"] { padding: 1rem !important; }
-        div[data-testid="stVerticalBlock"] > div { padding-bottom: 0.2rem !important; }
+        /* Reducir márgenes de títulos para ahorrar espacio vertical */
+        h2 { margin-top: 0.2rem !important; margin-bottom: 0.2rem !important; font-size: 1.8rem !important; }
+        p { margin-bottom: 0.4rem !important; }
         
-        /* Achicar el espacio de las líneas divisorias <hr> */
-        hr { margin-top: 0.5rem !important; margin-bottom: 0.5rem !important; }
+        /* Compactar drásticamente el espacio interno del formulario */
+        div[data-testid="stForm"] { padding: 0.8rem !important; margin-bottom: 0rem !important; }
+        div[data-testid="stVerticalBlock"] > div { padding-bottom: 0.1rem !important; }
+        
+        /* Líneas divisorias hiper-delgadas */
+        hr { margin-top: 0.4rem !important; margin-bottom: 0.4rem !important; }
         
         /* Ocultar interfaces nativas de Streamlit */
         footer {visibility: hidden; display: none !important;}
@@ -40,10 +44,10 @@ st.markdown("""
 # --- LOGO DEL MINISTERIO DE EDUCACIÓN DE SAN JUAN ---
 URL_LOGO_MINISTERIO = "image_587576.png"
 
-# Tamaño intermedio perfecto (width=220) y centrado mediante columnas estables
-col_logo_1, col_logo_2, col_logo_3 = st.columns([1.1, 1.8, 1.1])
+# Logo más grande (width=320) centrado perfectamente mediante columnas balanceadas
+col_logo_1, col_logo_2, col_logo_3 = st.columns([0.8, 2.4, 0.8])
 with col_logo_2:
-    st.image(URL_LOGO_MINISTERIO, width=220)
+    st.image(URL_LOGO_MINISTERIO, width=320)
 
 st.markdown("---")
 
@@ -51,7 +55,7 @@ st.markdown("---")
 EXCEL_PADRON = "docentes.xlsx"
 EXCEL_ASISTENCIA = "asistencia_registrada.xlsx"
 ARCHIVO_LINK = "link_config.txt"
-ARCHIVO_ESTADO = "estado_programa.txt"  # Archivo para persistir si está activo o no
+ARCHIVO_ESTADO = "estado_programa.txt"
 
 # --- MANEJO DEL LINK DINÁMICO CON VALIDACIÓN HTTP ---
 def leer_link_actual():
@@ -72,7 +76,7 @@ def leer_estado_programa():
     if os.path.exists(ARCHIVO_ESTADO):
         with open(ARCHIVO_ESTADO, "r", encoding="utf-8") as f:
             return f.read().strip() == "ACTIVO"
-    return True  # Por defecto activo si no existe el archivo
+    return True
 
 def guardar_estado_programa(activo):
     estado = "ACTIVO" if activo else "DESACTIVADO"
@@ -121,7 +125,6 @@ if password == "admin123":
     st.sidebar.success("Acceso concedido")
     st.sidebar.markdown("---")
     
-    # Interruptor para activar o desactivar el acceso público
     st.sidebar.subheader("⚙️ Control del Sistema")
     estado_switch = st.sidebar.toggle("Habilitar Acreditación Pública", value=programa_activo)
     if estado_switch != programa_activo:
@@ -249,14 +252,14 @@ else:
     st.markdown("## 🎓 Portal de Acreditación Virtual")
     st.markdown("Ingrese su número de documento para validar su asistencia e ingresar.")
 
-with st.container(border=True):
-    with st.form("form_acreditacion", clear_on_submit=False):
-        dni_ingresado = st.text_input("Número de DNI (sin puntos ni espacios)", max_chars=9, placeholder="Ej: 28444333")
-        
-        _, col_btn, _ = st.columns([0.4, 2, 0.4])
-        with col_btn:
-            texto_boton = "Confirmar Egreso 📤" if es_modo_salida else "Validar e Ingresar a la Sala 🚀"
-            boton_enviar = st.form_submit_button(texto_boton, use_container_width=True)
+# Quitamos el st.container exterior sobrante para maximizar la eficiencia del espacio vertical
+with st.form("form_acreditacion", clear_on_submit=False):
+    dni_ingresado = st.text_input("Número de DNI (sin puntos ni espacios)", max_chars=9, placeholder="Ej: 28444333")
+    
+    _, col_btn, _ = st.columns([0.4, 2, 0.4])
+    with col_btn:
+        texto_boton = "Confirmar Egreso 📤" if es_modo_salida else "Validar e Ingresar a la Sala 🚀"
+        boton_enviar = st.form_submit_button(texto_boton, use_container_width=True)
 
 if boton_enviar:
     if not dni_ingresado:
