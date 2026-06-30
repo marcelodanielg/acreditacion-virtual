@@ -9,11 +9,15 @@ from PIL import Image
 # Configuración de la página con tema centrado y estética compacta
 st.set_page_config(page_title="Acreditación Virtual", page_icon="🎓", layout="centered")
 
-# Ocultamos de raíz los elementos de Streamlit y compactamos los márgenes al máximo
+# CSS optimizado al máximo para balancear el tamaño del logo y forzar una sola página
 st.markdown("""
     <style>
-        /* Reducir márgenes superiores e inferiores del contenedor principal */
+        /* Reducir márgenes del contenedor principal */
         .block-container { padding-top: 1rem; padding-bottom: 0rem; }
+        
+        /* Compactar el espacio interno de los formularios y contenedores */
+        div[data-testid="stForm"] { padding: 1rem !important; }
+        div[data-testid="stVerticalBlock"] > div { padding-bottom: 0.2rem !important; }
         
         /* Achicar el espacio de las líneas divisorias <hr> */
         hr { margin-top: 0.5rem !important; margin-bottom: 0.5rem !important; }
@@ -36,10 +40,10 @@ st.markdown("""
 # --- LOGO DEL MINISTERIO DE EDUCACIÓN DE SAN JUAN ---
 URL_LOGO_MINISTERIO = "image_587576.png"
 
-# Logo más compacto (width=180) y centrado para ahorrar espacio vertical
-col_logo_1, col_logo_2, col_logo_3 = st.columns([1.2, 1.6, 1.2])
+# Tamaño intermedio perfecto (width=220) y centrado mediante columnas estables
+col_logo_1, col_logo_2, col_logo_3 = st.columns([1.1, 1.8, 1.1])
 with col_logo_2:
-    st.image(URL_LOGO_MINISTERIO, width=180)
+    st.image(URL_LOGO_MINISTERIO, width=220)
 
 st.markdown("---")
 
