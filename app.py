@@ -4,8 +4,8 @@ from datetime import datetime, timedelta, timezone
 import os
 import io
 import qrcode
-from PIL import Image
 import time
+import csv
 
 # Configuración de la página con tema centrado y estética compacta
 st.set_page_config(page_title="Acreditación Virtual", page_icon="🎓", layout="centered")
@@ -13,28 +13,17 @@ st.set_page_config(page_title="Acreditación Virtual", page_icon="🎓", layout=
 # CSS definitivo: Logo muy grande y márgenes internos en su mínima expresión
 st.markdown("""
     <style>
-        /* Reducir al extremo los márgenes de la página */
         .block-container { padding-top: 0.5rem !important; padding-bottom: 0rem !important; }
-        
-        /* Ajustar espaciado de textos y títulos */
         h2 { margin-top: 0.1rem !important; margin-bottom: 0.1rem !important; font-size: 1.7rem !important; }
         p { margin-bottom: 0.3rem !important; font-size: 0.95rem !important; }
-        
-        /* Compactar la caja del formulario */
         div[data-testid="stForm"] { padding: 0.7rem !important; margin-bottom: 0rem !important; }
         div[data-testid="stVerticalBlock"] > div { padding-bottom: 0.05rem !important; }
-        
-        /* Línea divisoria minimalista */
         hr { margin-top: 0.3rem !important; margin-bottom: 0.3rem !important; }
-        
-        /* Ocultar interfaces nativas de Streamlit */
         footer {visibility: hidden; display: none !important;}
         header {visibility: hidden; display: none !important;}
         #MainMenu {visibility: hidden; display: none !important;}
         .stAppDeployButton {display:none !important;}
         [data-testid="stStatusWidget"] {display:none !important;}
-        
-        /* Ocultar los botones flotantes de administración de Streamlit Cloud */
         iframe[title="Streamlit Cloud Toolbar"] {display: none !important; visibility: hidden !important;}
         div[class*="viewerBadge"] {display: none !important; visibility: hidden !important;}
         button[class*="StyledAppActionButton"] {display: none !important; visibility: hidden !important;}
@@ -49,44 +38,94 @@ def obtener_hora_argentina():
 
 # Nombres de los archivos de datos
 EXCEL_PADRON = "docentes.xlsx"
-EXCEL_ASISTENCIA = "asistencia_registrada.xlsx"
+CSV_ASISTENCIA = "asistencia_registrada.csv"  # CAMBIO CLAVE: Migración a CSV
 ARCHIVO_LINK = "link_config.txt"
 ARCHIVO_ESTADO = "estado_programa.txt"
 
-# --- FUNCIONES BLINDADAS PARA EVITAR ERRORES ZLIB (CORRUPCIÓN) ---
-def cargar_asistencias_seguro():
-    if os.path.exists(EXCEL_ASISTENCIA):
+# --- FUNCIONES ULTRA-RÁPIDAS CON CONCURRENCIA PARA CSV ---
+def inicializar_csv_si_no_existe():
+    if not os.path.exists(CSV_ASISTENCIA):
         try:
-            return pd.read_excel(EXCEL_ASISTENCIA, dtype={"dni": str})
+            with open(CSV_ASISTENCIA, mode="w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(["dni", "nombre", "apellido", "fecha_hora_entrada", "fecha_hora_salida", "minutos_conectado"])
         except Exception:
-            # Si el archivo está corrupto (zlib error), hacemos un backup del roto y creamos uno nuevo
-            try:
-                os.rename(EXCEL_ASISTENCIA, f"corrupto_{int(time.time())}_{EXCEL_ASISTENCIA}")
-            except:
-                pass
-            return pd.DataFrame(columns=["dni", "nombre", "apellido", "fecha_hora_entrada", "fecha_hora_salida", "minutos_conectado"])
-    return pd.DataFrame(columns=["dni", "nombre", "apellido", "fecha_hora_entrada", "fecha_hora_salida", "minutos_conectado"])
+            pass
 
-def guardar_asistencias_seguro(df):
-    # Intentos reiterados cortos por si hay bloqueos de escritura concurrente
-    for _ in range(3):
+inicializar_csv_si_no_existe()
+
+def registrar_entrada_csv(dni, nombre, apellido, fecha_entrada):
+    # El modo 'a' (append) escribe al final de forma instantánea sin bloquear lecturas
+    for _ in range(5):  # Reintentos rápidos por micro-bloqueos del OS
         try:
-            df.to_excel(EXCEL_ASISTENCIA, index=False)
+            with open(CSV_ASISTENCIA, mode="a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow([dni, nombre, apellido, fecha_entrada, "", ""])
             return True
-        except Exception:
-            time.sleep(0.2)
+        except IOError:
+            time.sleep(0.05)
     return False
+
+def registrar_salida_csv(dni, fecha_salida_str):
+    # Para la salida necesitamos actualizar una fila, usamos un bloqueo ligero de reintentos
+    for _ in range(5):
+        try:
+            if not os.path.exists(CSV_ASISTENCIA):
+                return False
+            
+            df = pd.read_csv(CSV_ASISTENCIA, dtype={"dni": str}, keep_default_na=False)
+            idx = df[df['dni'] == str(dni)].index
+            
+            if not idx.empty:
+                # Si ya tiene salida registrada, no sobreescribir
+                if df.loc[idx[0], "fecha_hora_salida"] != "":
+                    return df.loc[idx[0], "nombre"], df.loc[idx[0], "minutos_conectado"]
+                
+                entrada_str = df.loc[idx[0], "fecha_hora_entrada"]
+                tz_arg = timezone(timedelta(hours=-3))
+                ahora_dt = datetime.now(tz_arg)
+                
+                try:
+                    entrada_dt = datetime.strptime(str(entrada_str), "%Y-%m-%d %H:%M:%S").replace(tzinfo=tz_arg)
+                    diferencia = ahora_dt - entrada_dt
+                    minutos_totales = round(diferencia.total_seconds() / 60, 1)
+                except:
+                    minutos_totales = 0.0
+                
+                df.at[idx[0], "fecha_hora_salida"] = fecha_salida_str
+                df.at[idx[0], "minutos_conectado"] = minutos_totales
+                
+                # Escritura atómica rápida
+                df.to_csv(CSV_ASISTENCIA, index=False, encoding="utf-8")
+                return df.loc[idx[0], "nombre"], minutos_totales
+            return None
+        except Exception:
+            time.sleep(0.1)
+    return None
+
+def comprobar_asistencia_existente(dni):
+    if not os.path.exists(CSV_ASISTENCIA):
+        return None
+    try:
+        # Lectura veloz de CSV limpios
+        df = pd.read_csv(CSV_ASISTENCIA, dtype={"dni": str}, keep_default_na=False)
+        coincidencia = df[df['dni'] == str(dni)]
+        if not coincidencia.empty:
+            return coincidencia.iloc[0]
+    except:
+        pass
+    return None
 
 # --- LOGO DEL MINISTERIO DE EDUCACIÓN DE SAN JUAN ---
 URL_LOGO_MINISTERIO = "image_587576.png"
-
 col_logo_1, col_logo_2, col_logo_3 = st.columns([0.2, 3.6, 0.2])
 with col_logo_2:
-    st.image(URL_LOGO_MINISTERIO, use_container_width=True)
+    if os.path.exists(URL_LOGO_MINISTERIO):
+        st.image(URL_LOGO_MINISTERIO, use_container_width=True)
 
 st.markdown("---")
 
-# --- MANEJO DEL LINK DINÁMICO CON VALIDACIÓN HTTP ---
+# --- MANEJO DEL LINK DINÁMICO ---
 def leer_link_actual():
     if os.path.exists(ARCHIVO_LINK):
         with open(ARCHIVO_LINK, "r", encoding="utf-8") as f:
@@ -100,7 +139,7 @@ def guardar_nuevo_link(nuevo_url):
     with open(ARCHIVO_LINK, "w", encoding="utf-8") as f:
         f.write(url_limpia)
 
-# --- MANEJO DEL ESTADO DEL PROGRAMA (ACTIVO/DESACTIVADO) ---
+# --- MANEJO DEL ESTADO DEL PROGRAMA ---
 def leer_estado_programa():
     if os.path.exists(ARCHIVO_ESTADO):
         with open(ARCHIVO_ESTADO, "r", encoding="utf-8") as f:
@@ -119,7 +158,6 @@ es_modo_salida = query_params.get("accion") == "salida"
 # --- INICIALIZACIÓN DE ESTADOS INTERNOS ---
 if "nuevos_docentes" not in st.session_state:
     st.session_state.nuevos_docentes = pd.DataFrame(columns=["dni", "apellido", "nombre"])
-
 if "mostrar_autoregistro" not in st.session_state:
     st.session_state.mostrar_autoregistro = False
 if "dni_pendiente" not in st.session_state:
@@ -129,28 +167,25 @@ if "estado_flujo" not in st.session_state:
 if "datos_docente_actual" not in st.session_state:
     st.session_state.datos_docente_actual = {}
 
-# FUNCIÓN PARA CARGAR EL PADRÓN BASE
-@st.cache_data(ttl=10)
-def cargar_padron():
+# FUNCIÓN PARA CARGAR EL PADRÓN BASE (Optimizado al extremo con Cache global)
+@st.cache_data(ttl=600, show_spinner=False)
+def cargar_padron_estatico():
     if os.path.exists(EXCEL_PADRON):
         try:
-            return pd.read_excel(EXCEL_PADRON, dtype={"dni": str})
+            df = pd.read_excel(EXCEL_PADRON, dtype={"dni": str})
+            df['dni'] = df['dni'].str.strip()
+            return df[["dni", "apellido", "nombre"]]
         except:
             return pd.DataFrame(columns=["dni", "apellido", "nombre"])
-    else:
-        return pd.DataFrame(columns=["dni", "apellido", "nombre"])
+    return pd.DataFrame(columns=["dni", "apellido", "nombre"])
 
-df_excel = cargar_padron()
-df_total_habilitados = pd.concat([df_excel, st.session_state.nuevos_docentes], ignore_index=True)
-
+df_excel = cargar_padron_estatico()
 
 # ==========================================
 # PANEL DE ADMINISTRACIÓN (Barra Lateral)
 # ==========================================
 st.sidebar.markdown("## 🔐 Panel de Soporte")
 password = st.sidebar.text_input("Contraseña de Acceso", type="password")
-
-# Leer el estado actual del programa desde el archivo
 programa_activo = leer_estado_programa()
 
 if password == "admin123":
@@ -165,18 +200,15 @@ if password == "admin123":
         st.rerun()
         
     st.sidebar.markdown("---")
-    
     st.sidebar.subheader("🔗 Enlace de la Sala")
     link_actual = leer_link_actual()
     nuevo_link = st.sidebar.text_input("URL de Destino", value=link_actual)
-    
     if nuevo_link != link_actual:
         guardar_nuevo_link(nuevo_link)
         st.sidebar.success("¡Enlace actualizado!")
         st.rerun()
     
     st.sidebar.markdown("---")
-    
     st.sidebar.subheader("🖼️ QR de Acreditación de Salida")
     url_salida = "https://acreditacionvirtual.streamlit.app/?accion=salida"
         
@@ -200,46 +232,53 @@ if password == "admin123":
     )
     
     st.sidebar.markdown("---")
-    
     st.sidebar.subheader("📥 Gestión de Asistencias")
-    df_descarga = cargar_asistencias_seguro()
     
-    if not df_descarga.empty:
-        total_presentes = len(df_descarga)
-        con_salida = df_descarga["fecha_hora_salida"].notna().sum() if "fecha_hora_salida" in df_descarga.columns else 0
-        
-        st.sidebar.markdown("### 📊 Indicadores en Vivo")
-        col_m1, col_m2 = st.sidebar.columns(2)
-        col_m1.metric("Ingresos", total_presentes)
-        col_m2.metric("Egresos", con_salida)
-        
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df_descarga.to_excel(writer, index=False, sheet_name='Presentes')
-        
-        st.sidebar.download_button(
-            label="📊 Descargar Reporte (Excel)",
-            data=buffer.getvalue(),
-            file_name=f"asistencia_{obtener_hora_argentina().strftime('%Y-%m-%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
-        
-        st.sidebar.markdown("---")
-        st.sidebar.warning("⚠️ Zona de Peligro")
-        confirmar_borrado = st.sidebar.checkbox("Confirmar eliminación permanente")
-        btn_reiniciar = st.sidebar.button("♻️ Reiniciar Base de Asistencias", type="secondary", use_container_width=True)
-        
-        if btn_reiniciar and confirmar_borrado:
-            try:
-                if os.path.exists(EXCEL_ASISTENCIA):
-                    os.remove(EXCEL_ASISTENCIA)
-                st.session_state.nuevos_docentes = pd.DataFrame(columns=["dni", "apellido", "nombre"])
-                st.session_state.estado_flujo = "formulario"
-                st.sidebar.success("¡Base de datos limpia!")
-                st.rerun()
-            except Exception as e:
-                st.sidebar.error(f"Error: {e}")
+    if os.path.exists(CSV_ASISTENCIA):
+        try:
+            df_descarga = pd.read_csv(CSV_ASISTENCIA, dtype={"dni": str})
+        except:
+            df_descarga = pd.DataFrame()
+            
+        if not df_descarga.empty:
+            total_presentes = len(df_descarga)
+            con_salida = df_descarga["fecha_hora_salida"].notna().sum()
+            
+            st.sidebar.markdown("### 📊 Indicadores en Vivo")
+            col_m1, col_m2 = st.sidebar.columns(2)
+            col_m1.metric("Ingresos", total_presentes)
+            col_m2.metric("Egresos", con_salida)
+            
+            # Conversión instantánea a Excel bajo demanda para descarga limpia del admin
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                df_descarga.to_excel(writer, index=False, sheet_name='Presentes')
+            
+            st.sidebar.download_button(
+                label="📊 Descargar Reporte (Excel)",
+                data=buffer.getvalue(),
+                file_name=f"asistencia_{obtener_hora_argentina().strftime('%Y-%m-%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+            
+            st.sidebar.markdown("---")
+            st.sidebar.warning("⚠️ Zona de Peligro")
+            confirmar_borrado = st.sidebar.checkbox("Confirmar eliminación permanente")
+            btn_reiniciar = st.sidebar.button("♻️ Reiniciar Base de Asistencias", type="secondary", use_container_width=True)
+            
+            if btn_reiniciar and confirmar_borrado:
+                try:
+                    if os.path.exists(CSV_ASISTENCIA):
+                        os.remove(CSV_ASISTENCIA)
+                    st.session_state.nuevos_docentes = pd.DataFrame(columns=["dni", "apellido", "nombre"])
+                    st.session_state.estado_flujo = "formulario"
+                    st.sidebar.success("¡Base de datos limpia!")
+                    st.rerun()
+                except Exception as e:
+                    st.sidebar.error(f"Error: {e}")
+        else:
+            st.sidebar.info("Aún no se registran asistencias.")
     else:
         st.sidebar.info("Aún no se registran asistencias.")
 
@@ -287,7 +326,6 @@ else:
 
 with st.form("form_acreditacion", clear_on_submit=False):
     dni_ingresado = st.text_input("Número de DNI (sin puntos ni espacios)", max_chars=9, placeholder="Ej: 28444333")
-    
     _, col_btn, _ = st.columns([0.4, 2, 0.4])
     with col_btn:
         texto_boton = "Confirmar Egreso 📤" if es_modo_salida else "Validar e Ingresar a la Sala 🚀"
@@ -301,114 +339,62 @@ if boton_enviar:
         ahora_dt = obtener_hora_argentina()
         ahora_str = ahora_dt.strftime("%Y-%m-%d %H:%M:%S")
         
-        df_asistencias = cargar_asistencias_seguro()
+        coincidencia_asistencia = comprobar_asistencia_existente(dni_ingresado)
         
         # [MODO SALIDA]: Lógica de Egreso
         if es_modo_salida:
-            if not df_asistencias.empty:
-                if "fecha_hora_entrada" not in df_asistencias.columns and "fecha_hora" in df_asistencias.columns:
-                    df_asistencias.rename(columns={"fecha_hora": "fecha_hora_entrada"}, inplace=True)
-                
-                for col in ["fecha_hora_entrada", "fecha_hora_salida", "minutos_conectado"]:
-                    if col not in df_asistencias.columns:
-                        df_asistencias[col] = None
-                
-                df_asistencias["fecha_hora_entrada"] = df_asistencias["fecha_hora_entrada"].astype(object)
-                df_asistencias["fecha_hora_salida"] = df_asistencias["fecha_hora_salida"].astype(object)
-                df_asistencias["minutos_conectado"] = df_asistencias["minutos_conectado"].astype(object)
-                
-                idx = df_asistencias[df_asistencias['dni'] == dni_ingresado].index
-                
-                if not idx.empty:
-                    val_salida = df_asistencias.loc[idx[0], "fecha_hora_salida"]
-                    if pd.isna(val_salida) or val_salida == "" or val_salida is None:
-                        entrada_str = df_asistencias.loc[idx[0], "fecha_hora_entrada"]
-                        
-                        if pd.isna(entrada_str) or entrada_str is None:
-                            entrada_dt = ahora_dt
-                            df_asistencias.at[idx[0], "fecha_hora_entrada"] = ahora_str
-                        else:
-                            try:
-                                entrada_dt = datetime.strptime(str(entrada_str), "%Y-%m-%d %H:%M:%S")
-                                entrada_dt = entrada_dt.replace(tzinfo=timezone(timedelta(hours=-3)))
-                            except:
-                                entrada_dt = ahora_dt
-                        
-                        diferencia = ahora_dt - entrada_dt
-                        minutos_totales = round(diferencia.total_seconds() / 60, 1)
-                        
-                        df_asistencias.at[idx[0], "fecha_hora_salida"] = ahora_str
-                        df_asistencias.at[idx[0], "minutos_conectado"] = minutos_totales
-                        guardar_asistencias_seguro(df_asistencias)
-                        
-                        st.session_state.datos_docente_actual = {
-                            "nombre": df_asistencias.loc[idx[0], 'nombre'],
-                            "minutos": minutos_totales
-                        }
-                        st.session_state.estado_flujo = "exito_salida"
-                        st.rerun()
-                    else:
-                        st.session_state.datos_docente_actual = {
-                            "nombre": df_asistencias.loc[idx[0], 'nombre'],
-                            "minutos": df_asistencias.loc[idx[0], 'minutos_conectado']
-                        }
-                        st.session_state.estado_flujo = "exito_salida"
-                        st.rerun()
+            if coincidencia_asistencia is not None:
+                resultado_salida = registrar_salida_csv(dni_ingresado, ahora_str)
+                if resultado_salida:
+                    st.session_state.datos_docente_actual = {
+                        "nombre": resultado_salida[0],
+                        "minutos": resultado_salida[1]
+                    }
+                    st.session_state.estado_flujo = "exito_salida"
+                    st.rerun()
                 else:
-                    st.error("❌ No se encontró registro de 'Entrada' para este DNI.")
+                    st.error("❌ Ocurrió un error al procesar el egreso. Intente nuevamente.")
             else:
-                st.error("❌ Todavía no hay ninguna asistencia registrada el día de hoy.")
+                st.error("❌ No se encontró registro de 'Entrada' para este DNI el día de hoy.")
 
         # [MODO ENTRADA]: Lógica de Ingreso
         else:
             st.session_state.mostrar_autoregistro = False
-            ya_presente = False
-            datos_presente = None
             
-            if not df_asistencias.empty:
-                if "fecha_hora_entrada" not in df_asistencias.columns:
-                    df_asistencias.rename(columns={"fecha_hora": "fecha_hora_entrada"}, inplace=True)
-                
-                coincidencia_asistencia = df_asistencias[df_asistencias['dni'] == dni_ingresado]
-                if not coincidencia_asistencia.empty:
-                    ya_presente = True
-                    datos_presente = coincidencia_asistencia.iloc[0]
-
-            if ya_presente:
+            if coincidencia_asistencia is not None:
                 st.session_state.datos_docente_actual = {
-                    "nombre": datos_presente['nombre'],
-                    "apellido": datos_presente['apellido']
+                    "nombre": coincidencia_asistencia['nombre'],
+                    "apellido": coincidencia_asistencia['apellido']
                 }
                 st.session_state.estado_flujo = "exito_entrada"
                 st.rerun()
             else:
-                coincidencia_padron = df_total_habilitados[df_total_habilitados['dni'] == dni_ingresado]
+                # Comprobar primero memoria de auto-registrados locales de sesión
+                coincidencia_sesion = st.session_state.nuevos_docentes[st.session_state.nuevos_docentes['dni'] == dni_ingresado]
                 
-                if not coincidencia_padron.empty:
-                    apellido_real = coincidencia_padron.iloc[0]['apellido']
-                    nombre_real = coincidencia_padron.iloc[0]['nombre']
-                    
-                    nueva_asistencia = pd.DataFrame([{
-                        "dni": dni_ingresado, 
-                        "nombre": nombre_real, 
-                        "apellido": apellido_real, 
-                        "fecha_hora_entrada": ahora_str,
-                        "fecha_hora_salida": None,
-                        "minutos_conectado": None
-                    }])
-                    
-                    df_final = pd.concat([df_asistencias, nueva_asistencia], ignore_index=True)
-                    guardar_asistencias_seguro(df_final)
-                    
-                    st.session_state.datos_docente_actual = {
-                        "nombre": nombre_real,
-                        "apellido": apellido_real
-                    }
+                if not coincidencia_sesion.empty:
+                    apellido_real = coincidencia_sesion.iloc[0]['apellido']
+                    nombre_real = coincidencia_sesion.iloc[0]['nombre']
+                    registrar_entrada_csv(dni_ingresado, nombre_real, apellido_real, ahora_str)
+                    st.session_state.datos_docente_actual = {"nombre": nombre_real, "apellido": apellido_real}
                     st.session_state.estado_flujo = "exito_entrada"
                     st.rerun()
                 else:
-                    st.session_state.mostrar_autoregistro = True
-                    st.session_state.dni_pendiente = dni_ingresado
+                    # Comprobar Padrón General Indexado
+                    coincidencia_padron = df_excel[df_excel['dni'] == dni_ingresado]
+                    
+                    if not coincidencia_padron.empty:
+                        apellido_real = coincidencia_padron.iloc[0]['apellido']
+                        nombre_real = coincidencia_padron.iloc[0]['nombre']
+                        
+                        registrar_entrada_csv(dni_ingresado, nombre_real, apellido_real, ahora_str)
+                        
+                        st.session_state.datos_docente_actual = {"nombre": nombre_real, "apellido": apellido_real}
+                        st.session_state.estado_flujo = "exito_entrada"
+                        st.rerun()
+                    else:
+                        st.session_state.mostrar_autoregistro = True
+                        st.session_state.dni_pendiente = dni_ingresado
 
 
 # ==========================================
@@ -442,18 +428,7 @@ if st.session_state.mostrar_autoregistro and not es_modo_salida:
                 }])
                 st.session_state.nuevos_docentes = pd.concat([st.session_state.nuevos_docentes, docente_nuevo], ignore_index=True)
                 
-                nueva_asistencia = pd.DataFrame([{
-                    "dni": st.session_state.dni_pendiente, 
-                    "nombre": nom_formateado, 
-                    "apellido": ape_formateado, 
-                    "fecha_hora_entrada": ahora_str,
-                    "fecha_hora_salida": None,
-                    "minutos_conectado": None
-                }])
-                
-                df_asistencias_viejas = cargar_asistencias_seguro()
-                df_final = pd.concat([df_asistencias_viejas, nueva_asistencia], ignore_index=True)
-                guardar_asistencias_seguro(df_final)
+                registrar_entrada_csv(st.session_state.dni_pendiente, nom_formateado, ape_formateado, ahora_str)
                 
                 st.session_state.mostrar_autoregistro = False
                 st.session_state.datos_docente_actual = {
