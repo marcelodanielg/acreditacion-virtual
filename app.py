@@ -38,7 +38,7 @@ def obtener_hora_argentina():
 
 # Nombres de los archivos de datos
 EXCEL_PADRON = "docentes.xlsx"
-CSV_ASISTENCIA = "asistencia_registrada.csv"  # Formato seguro anti-corrupción
+CSV_ASISTENCIA = "asistencia_registrada.csv"  
 ARCHIVO_LINK = "link_config.txt"
 ARCHIVO_ESTADO = "estado_programa.txt"
 
@@ -54,7 +54,7 @@ if not os.path.exists(CSV_ASISTENCIA):
 # --- PROCESOS ULTRA VELOCES DE ESCRITURA EN CSV (MODO APPEND INMUNE A FALLOS) ---
 def registrar_evento_csv(dni, nombre, apellido, tipo):
     ahora_str = obtener_hora_argentina().strftime("%Y-%m-%d %H:%M:%S")
-    for _ in range(5):  # Reintentos veloces en caso de micro-bloqueos
+    for _ in range(5):  
         try:
             with open(CSV_ASISTENCIA, mode="a", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
@@ -64,14 +64,12 @@ def registrar_evento_csv(dni, nombre, apellido, tipo):
             time.sleep(0.05)
     return False
 
-# Buscador veloz de asistencia previa en memoria para la interfaz
+# Buscador rápido en el padrón o en asistencias previas
 def buscar_nombre_en_padron_o_asistencia(dni):
-    # Primero busca en el padrón cacheado (Ultra rápido)
     coincidencia_padron = df_excel[df_excel['dni'] == str(dni)]
     if not coincidencia_padron.empty:
         return coincidencia_padron.iloc[0]['nombre'], coincidencia_padron.iloc[0]['apellido']
     
-    # Si no está en el padrón, busca en lo que vaya del CSV
     if os.path.exists(CSV_ASISTENCIA):
         try:
             df = pd.read_csv(CSV_ASISTENCIA, dtype={"dni": str}, keep_default_na=False)
@@ -80,7 +78,7 @@ def buscar_nombre_en_padron_o_asistencia(dni):
                 return coincidencia.iloc[0]['nombre'], coincidencia.iloc[0]['apellido']
         except:
             pass
-    return "Docente", "Acreditado"
+    return None, None
 
 # --- LOGO DEL MINISTERIO DE EDUCACIÓN DE SAN JUAN ---
 URL_LOGO_MINISTERIO = "image_587576.png"
@@ -122,8 +120,6 @@ query_params = st.query_params
 es_modo_salida = query_params.get("accion") == "salida"
 
 # --- INICIALIZACIÓN DE ESTADOS DE SESIÓN ---
-if "nuevos_docentes" not in st.session_state:
-    st.session_state.nuevos_docentes = pd.DataFrame(columns=["dni", "apellido", "nombre"])
 if "mostrar_autoregistro" not in st.session_state:
     st.session_state.mostrar_autoregistro = False
 if "dni_pendiente" not in st.session_state:
@@ -216,7 +212,6 @@ if password == "admin123":
             col_m2.metric("Egresos", total_egresos)
             
             # PROCESAMIENTO INTELIGENTE BAJO DEMANDA PARA EL REPORTE EXCEL FINAL
-            # Une las filas de entrada y salida de cada DNI para armar la planilla limpia
             df_entradas = df_crudo[df_crudo["tipo_registro"] == "ENTRADA"].drop_duplicates(subset=["dni"], keep="first")
             df_salidas = df_crudo[df_crudo["tipo_registro"] == "SALIDA"].drop_duplicates(subset=["dni"], keep="last")
             
@@ -224,9 +219,6 @@ if password == "admin123":
                                   df_salidas[["dni", "fecha_hora"]], 
                                   on="dni", how="left", suffixes=("_entrada", "_salida"))
             
-            df_reporte.rename(columns={"fecha_hora_entrada": "fecha_hora_entrada", "fecha_hora_salida": "fecha_hora_salida"}, inplace=True)
-            
-            # Calcular minutos de conexión para el reporte final
             def calcular_minutos_reporte(row):
                 if pd.isna(row["fecha_hora_salida"]) or pd.isna(row["fecha_hora_entrada"]):
                     return ""
@@ -263,16 +255,12 @@ if password == "admin123":
                 try:
                     if os.path.exists(CSV_ASISTENCIA):
                         os.remove(CSV_ASISTENCIA)
-                    st.session_state.nuevos_docentes = pd.DataFrame(columns=["dni", "apellido", "nombre"])
                     st.session_state.estado_flujo = "formulario"
+                    st.session_state.mostrar_autoregistro = False
                     st.sidebar.success("¡Base de datos limpia!")
                     st.rerun()
                 except Exception as e:
                     st.sidebar.error(f"Error: {e}")
-        else:
-            st.sidebar.info("Aún no se registran asistencias.")
-    else:
-        st.sidebar.info("Aún no se registran asistencias.")
 
 
 # ==========================================
@@ -306,97 +294,79 @@ elif st.session_state.estado_flujo == "exito_salida":
 
 
 # ==========================================
-# INTERFAZ PÚBLICA (FORMULARIO BASE)
-# ==========================================
-if es_modo_salida:
-    st.markdown("## 🎓 Registro de Salida")
-    st.markdown("Ingrese su DNI para **asentar su egreso** de la capacitación.")
-else:
-    st.markdown("## 🎓 Portal de Acreditación Virtual")
-    st.markdown("Ingrese su número de documento para validar su asistencia e ingresar.")
-
-with st.form("form_acreditacion", clear_on_submit=False):
-    dni_ingresado = st.text_input("Número de DNI (sin puntos ni espacios)", max_chars=9, placeholder="Ej: 28444333")
-    _, col_btn, _ = st.columns([0.4, 2, 0.4])
-    with col_btn:
-        texto_boton = "Confirmar Egreso 📤" if es_modo_salida else "Validar e Ingresar a la Sala 🚀"
-        boton_enviar = st.form_submit_button(texto_boton, use_container_width=True)
-
-if boton_enviar:
-    if not dni_ingresado:
-        st.error("⚠️ Por favor, ingrese un número de DNI válido.")
-    else:
-        dni_ingresado = dni_ingresado.strip()
-        
-        # Buscar nombre rápidamente en caliente para saludar de forma personalizada
-        nom, ape = buscar_nombre_en_padron_o_asistencia(dni_ingresado)
-        
-        # [MODO SALIDA]: Lógica de Egreso Directo y Veloz (Append Puro)
-        if es_modo_salida:
-            registrar_evento_csv(dni_ingresado, nom, ape, "SALIDA")
-            st.session_state.datos_docente_actual = {"nombre": nom}
-            st.session_state.estado_flujo = "exito_salida"
-            st.rerun()
-
-        # [MODO ENTRADA]: Lógica de Ingreso
-        else:
-            st.session_state.mostrar_autoregistro = False
-            
-            # Si ya está en el padrón o sesión, entra directo de manera atómica
-            coincidencia_padron = df_excel[df_excel['dni'] == dni_ingresado]
-            
-            if not coincidencia_padron.empty:
-                apellido_real = coincidencia_padron.iloc[0]['apellido']
-                nombre_real = coincidencia_padron.iloc[0]['nombre']
-            else:
-                # Si es un DNI que no figura en ningún lado, le asignamos valores genéricos en modo veloz
-                # para que no se trabe el flujo bajo ningún punto de vista masivo
-                apellido_real = "Acreditado"
-                nombre_real = "Docente"
-            
-            registrar_evento_csv(dni_ingresado, nombre_real, apellido_real, "ENTRADA")
-            st.session_state.datos_docente_actual = {"nombre": nombre_real, "apellido": apellido_real}
-            st.session_state.estado_flujo = "exito_entrada"
-            st.rerun()
-
-# ==========================================
-# SECCIÓN CONDICIONAL: AUTO-REGISTRO
+# INTERFAZ PÚBLICA (FORMULARIO BASE O AUTO-REGISTRO)
 # ==========================================
 if st.session_state.mostrar_autoregistro and not es_modo_salida:
+    # FORMULARIO DE ALTA PARA DOCENTES NO ENCONTRADOS
     with st.container(border=True):
-        st.warning("⚠️ **DNI no encontrado.** Complete sus datos por única vez para darse de alta.")
+        st.warning("⚠️ **DNI no encontrado en el padrón.**")
+        st.markdown("Por favor, ingrese sus datos por única vez para darse de alta en el sistema e ingresar:")
+        
         with st.form("form_autoregistro"):
             st.markdown(f"**Documento:** `{st.session_state.dni_pendiente}`")
             col1, col2 = st.columns(2)
             with col1:
-                auto_apellido = st.text_input("Apellido/s", placeholder="Ej: GOMEZ")
+                auto_apellido = st.text_input("Apellido/s", placeholder="Ej: GOMEZ").strip().upper()
             with col2:
-                auto_nombre = st.text_input("Nombre/s", placeholder="Ej: Juan Carlos")
+                auto_nombre = st.text_input("Nombre/s", placeholder="Ej: JUAN CARLOS").strip().title()
                 
             _, col_auto_btn, _ = st.columns([0.5, 2, 0.5])
             with col_auto_btn:
-                boton_auto_guardar = st.form_submit_button("Confirmar Registro y Entrar", use_container_width=True)
+                boton_auto_guardar = st.form_submit_button("Confirmar Datos y Entrar 🚀", use_container_width=True)
         
         if boton_auto_guardar:
             if auto_apellido and auto_nombre:
-                ape_formateado = auto_apellido.strip().upper()
-                nom_formateado = auto_nombre.strip().title()
-                
-                docente_nuevo = pd.DataFrame([{
-                    "dni": st.session_state.dni_pendiente,
-                    "apellido": ape_formateado,
-                    "nombre": nom_formateado
-                }])
-                st.session_state.nuevos_docentes = pd.concat([st.session_state.nuevos_docentes, docente_nuevo], ignore_index=True)
-                
-                registrar_evento_csv(st.session_state.dni_pendiente, nom_formateado, ape_formateado, "ENTRADA")
-                
+                registrar_evento_csv(st.session_state.dni_pendiente, auto_nombre, auto_apellido, "ENTRADA")
+                st.session_state.datos_docente_actual = {"nombre": auto_nombre, "apellido": auto_apellido}
                 st.session_state.mostrar_autoregistro = False
-                st.session_state.datos_docente_actual = {
-                    "nombre": nom_formateado,
-                    "apellido": ape_formateado
-                }
                 st.session_state.estado_flujo = "exito_entrada"
                 st.rerun()
             else:
                 st.error("❌ Ambos campos son obligatorios.")
+else:
+    # FORMULARIO ESTÁNDAR DE INGRESO / EGRESO
+    if es_modo_salida:
+        st.markdown("## 🎓 Registro de Salida")
+        st.markdown("Ingrese su DNI para **asentar su egreso** de la capacitación.")
+    else:
+        st.markdown("## 🎓 Portal de Acreditación Virtual")
+        st.markdown("Ingrese su número de documento para validar su asistencia e ingresar.")
+
+    with st.form("form_acreditacion", clear_on_submit=False):
+        dni_ingresado = st.text_input("Número de DNI (sin puntos ni espacios)", max_chars=9, placeholder="Ej: 28444333")
+        _, col_btn, _ = st.columns([0.4, 2, 0.4])
+        with col_btn:
+            texto_boton = "Confirmar Egreso 📤" if es_modo_salida else "Validar e Ingresar a la Sala 🚀"
+            boton_enviar = st.form_submit_button(texto_boton, use_container_width=True)
+
+    if boton_enviar:
+        if not dni_ingresado:
+            st.error("⚠️ Por favor, ingrese un número de DNI válido.")
+        else:
+            dni_ingresado = dni_ingresado.strip()
+            
+            # Intentar recuperar nombre y apellido si ya existe o está en el padrón
+            nom_detectado, ape_detectado = buscar_nombre_en_padron_o_asistencia(dni_ingresado)
+            
+            # [MODO SALIDA]: Lógica de Egreso Directo
+            if es_modo_salida:
+                nombre_final = nom_detectado if nom_detectado else "Docente"
+                apellido_final = ape_detectado if ape_detectado else "Acreditado"
+                registrar_evento_csv(dni_ingresado, nombre_final, apellido_final, "SALIDA")
+                st.session_state.datos_docente_actual = {"nombre": nombre_final}
+                st.session_state.estado_flujo = "exito_salida"
+                st.rerun()
+
+            # [MODO ENTRADA]: Lógica de Ingreso con Validación Real
+            else:
+                if nom_detectado is not None:
+                    # Si ya estaba en el padrón o se auto-registró antes, pasa directo
+                    registrar_evento_csv(dni_ingresado, nom_detectado, ape_detectado, "ENTRADA")
+                    st.session_state.datos_docente_actual = {"nombre": nom_detectado, "apellido": ape_detectado}
+                    st.session_state.estado_flujo = "exito_entrada"
+                    st.rerun()
+                else:
+                    # NO ESTÁ: Saltamos al modo auto-registro reteniendo el DNI ingresado
+                    st.session_state.dni_pendiente = dni_ingresado
+                    st.session_state.mostrar_autoregistro = True
+                    st.rerun()
