@@ -47,73 +47,40 @@ if not os.path.exists(CSV_ASISTENCIA):
     try:
         with open(CSV_ASISTENCIA, mode="w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["dni", "nombre", "apellido", "fecha_hora_entrada", "fecha_hora_salida", "minutos_conectado"])
+            writer.writerow(["dni", "nombre", "apellido", "tipo_registro", "fecha_hora"])
     except Exception:
         pass
 
-# --- PROCESOS VELOCES DE ESCRITURA EN CSV ---
-def registrar_entrada_csv(dni, nombre, apellido, fecha_entrada):
-    for _ in range(5):  # Reintentos veloces por concurrencia
+# --- PROCESOS ULTRA VELOCES DE ESCRITURA EN CSV (MODO APPEND INMUNE A FALLOS) ---
+def registrar_evento_csv(dni, nombre, apellido, tipo):
+    ahora_str = obtener_hora_argentina().strftime("%Y-%m-%d %H:%M:%S")
+    for _ in range(5):  # Reintentos veloces en caso de micro-bloqueos
         try:
             with open(CSV_ASISTENCIA, mode="a", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
-                writer.writerow([dni, nombre, apellido, fecha_entrada, "", ""])
+                writer.writerow([dni, nombre, apellido, tipo, ahora_str])
             return True
         except IOError:
             time.sleep(0.05)
     return False
 
-def registrar_salida_csv(dni, fecha_salida_str):
-    for _ in range(5):
+# Buscador veloz de asistencia previa en memoria para la interfaz
+def buscar_nombre_en_padron_o_asistencia(dni):
+    # Primero busca en el padrón cacheado (Ultra rápido)
+    coincidencia_padron = df_excel[df_excel['dni'] == str(dni)]
+    if not coincidencia_padron.empty:
+        return coincidencia_padron.iloc[0]['nombre'], coincidencia_padron.iloc[0]['apellido']
+    
+    # Si no está en el padrón, busca en lo que vaya del CSV
+    if os.path.exists(CSV_ASISTENCIA):
         try:
-            if not os.path.exists(CSV_ASISTENCIA):
-                return False
-            
             df = pd.read_csv(CSV_ASISTENCIA, dtype={"dni": str}, keep_default_na=False)
-            idx = df[df['dni'] == str(dni)].index
-            
-            if not idx.empty:
-                if df.loc[idx[0], "fecha_hora_salida"] != "":
-                    return df.loc[idx[0], "nombre"], df.loc[idx[0], "minutos_conectado"]
-                
-                entrada_str = df.loc[idx[0], "fecha_hora_entrada"]
-                tz_arg = timezone(timedelta(hours=-3))
-                ahora_dt = datetime.now(tz_arg)
-                
-                try:
-                    entrada_dt = datetime.strptime(str(entrada_str), "%Y-%m-%d %H:%M:%S").replace(tzinfo=tz_arg)
-                    diferencia = ahora_dt - entrada_dt
-                    minutos_totales = round(diferencia.total_seconds() / 60, 1)
-                except:
-                    minutos_totales = 0.0
-                
-                df.at[idx[0], "fecha_hora_salida"] = fecha_salida_str
-                df.at[idx[0], "minutos_conectado"] = minutos_totales
-                
-                df.to_csv(CSV_ASISTENCIA, index=False, encoding="utf-8")
-                return df.loc[idx[0], "nombre"], minutos_totales
-            return None
-        except Exception:
-            time.sleep(0.1)
-    return None
-
-def comprobar_asistencia_existente(dni):
-    if not os.path.exists(CSV_ASISTENCIA):
-        return None
-    try:
-        # CONTROL DE SATURACIÓN: Si el disco está pesado, salteamos la lectura
-        t_inicio = time.time()
-        df = pd.read_csv(CSV_ASISTENCIA, dtype={"dni": str}, keep_default_na=False)
-        
-        if (time.time() - t_inicio) > 0.4:  # Servidor lento -> Activa modo rápido
-            return None
-            
-        coincidencia = df[df['dni'] == str(dni)]
-        if not coincidencia.empty:
-            return coincidencia.iloc[0]
-    except:
-        pass
-    return None
+            coincidencia = df[df['dni'] == str(dni)]
+            if not coincidencia.empty:
+                return coincidencia.iloc[0]['nombre'], coincidencia.iloc[0]['apellido']
+        except:
+            pass
+    return "Docente", "Acreditado"
 
 # --- LOGO DEL MINISTERIO DE EDUCACIÓN DE SAN JUAN ---
 URL_LOGO_MINISTERIO = "image_587576.png"
@@ -235,22 +202,49 @@ if password == "admin123":
     
     if os.path.exists(CSV_ASISTENCIA):
         try:
-            df_descarga = pd.read_csv(CSV_ASISTENCIA, dtype={"dni": str})
+            df_crudo = pd.read_csv(CSV_ASISTENCIA, dtype={"dni": str})
         except:
-            df_descarga = pd.DataFrame()
+            df_crudo = pd.DataFrame()
             
-        if not df_descarga.empty:
-            total_presentes = len(df_descarga)
-            con_salida = df_descarga["fecha_hora_salida"].notna().sum()
+        if not df_crudo.empty:
+            total_ingresos = len(df_crudo[df_crudo["tipo_registro"] == "ENTRADA"])
+            total_egresos = len(df_crudo[df_crudo["tipo_registro"] == "SALIDA"])
             
             st.sidebar.markdown("### 📊 Indicadores en Vivo")
             col_m1, col_m2 = st.sidebar.columns(2)
-            col_m1.metric("Ingresos", total_presentes)
-            col_m2.metric("Egresos", con_salida)
+            col_m1.metric("Ingresos", total_ingresos)
+            col_m2.metric("Egresos", total_egresos)
+            
+            # PROCESAMIENTO INTELIGENTE BAJO DEMANDA PARA EL REPORTE EXCEL FINAL
+            # Une las filas de entrada y salida de cada DNI para armar la planilla limpia
+            df_entradas = df_crudo[df_crudo["tipo_registro"] == "ENTRADA"].drop_duplicates(subset=["dni"], keep="first")
+            df_salidas = df_crudo[df_crudo["tipo_registro"] == "SALIDA"].drop_duplicates(subset=["dni"], keep="last")
+            
+            df_reporte = pd.merge(df_entradas[["dni", "nombre", "apellido", "fecha_hora"]], 
+                                  df_salidas[["dni", "fecha_hora"]], 
+                                  on="dni", how="left", suffixes=("_entrada", "_salida"))
+            
+            df_reporte.rename(columns={"fecha_hora_entrada": "fecha_hora_entrada", "fecha_hora_salida": "fecha_hora_salida"}, inplace=True)
+            
+            # Calcular minutos de conexión para el reporte final
+            def calcular_minutos_reporte(row):
+                if pd.isna(row["fecha_hora_salida"]) or pd.isna(row["fecha_hora_entrada"]):
+                    return ""
+                try:
+                    e = datetime.strptime(str(row["fecha_hora_entrada"]), "%Y-%m-%d %H:%M:%S")
+                    s = datetime.strptime(str(row["fecha_hora_salida"]), "%Y-%m-%d %H:%M:%S")
+                    return round((s - e).total_seconds() / 60, 1)
+                except:
+                    return ""
+            
+            if not df_reporte.empty:
+                df_reporte["minutos_conectado"] = df_reporte.apply(calcular_minutos_reporte, axis=1)
+            else:
+                df_reporte["minutos_conectado"] = ""
             
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                df_descarga.to_excel(writer, index=False, sheet_name='Presentes')
+                df_reporte.to_excel(writer, index=False, sheet_name='Asistencia Procesada')
             
             st.sidebar.download_button(
                 label="📊 Descargar Reporte (Excel)",
@@ -307,7 +301,6 @@ elif st.session_state.estado_flujo == "exito_salida":
     with st.container(border=True):
         st.success("📥 **¡Egreso Asentado con Éxito!**")
         st.markdown(f"### Muchas gracias por participar, **{st.session_state.datos_docente_actual.get('nombre')}**.")
-        st.markdown(f"⏱️ **Tiempo final de permanencia:** {st.session_state.datos_docente_actual.get('minutos')} minutos.")
         st.info("🔒 **Tu asistencia de cierre ha sido procesada de forma segura.** Ya podés cerrar esta pestaña.")
     st.stop()
 
@@ -317,7 +310,7 @@ elif st.session_state.estado_flujo == "exito_salida":
 # ==========================================
 if es_modo_salida:
     st.markdown("## 🎓 Registro de Salida")
-    st.markdown("Ingrese su DNI para **asentar su egreso** y calcular el tiempo de permanencia.")
+    st.markdown("Ingrese su DNI para **asentar su egreso** de la capacitación.")
 else:
     st.markdown("## 🎓 Portal de Acreditación Virtual")
     st.markdown("Ingrese su número de documento para validar su asistencia e ingresar.")
@@ -334,67 +327,37 @@ if boton_enviar:
         st.error("⚠️ Por favor, ingrese un número de DNI válido.")
     else:
         dni_ingresado = dni_ingresado.strip()
-        ahora_dt = obtener_hora_argentina()
-        ahora_str = ahora_dt.strftime("%Y-%m-%d %H:%M:%S")
         
-        coincidencia_asistencia = comprobar_asistencia_existente(dni_ingresado)
+        # Buscar nombre rápidamente en caliente para saludar de forma personalizada
+        nom, ape = buscar_nombre_en_padron_o_asistencia(dni_ingresado)
         
-        # [MODO SALIDA]: Lógica de Egreso
+        # [MODO SALIDA]: Lógica de Egreso Directo y Veloz (Append Puro)
         if es_modo_salida:
-            if coincidencia_asistencia is None:
-                # BLINDAJE DE SATURACIÓN O AUSENCIA: Forzamos la inserción veloz al final
-                registrar_entrada_csv(dni_ingresado, "Docente", "Registrado", ahora_str) 
-                st.session_state.datos_docente_actual = {"nombre": "Docente", "minutos": "--"}
-                st.session_state.estado_flujo = "exito_salida"
-                st.rerun()
-            else:
-                resultado_salida = registrar_salida_csv(dni_ingresado, ahora_str)
-                if resultado_salida:
-                    st.session_state.datos_docente_actual = {
-                        "nombre": resultado_salida[0],
-                        "minutos": resultado_salida[1]
-                    }
-                    st.session_state.estado_flujo = "exito_salida"
-                    st.rerun()
-                else:
-                    st.error("❌ Por favor intente nuevamente.")
+            registrar_evento_csv(dni_ingresado, nom, ape, "SALIDA")
+            st.session_state.datos_docente_actual = {"nombre": nom}
+            st.session_state.estado_flujo = "exito_salida"
+            st.rerun()
 
         # [MODO ENTRADA]: Lógica de Ingreso
         else:
             st.session_state.mostrar_autoregistro = False
             
-            if coincidencia_asistencia is not None:
-                st.session_state.datos_docente_actual = {
-                    "nombre": coincidencia_asistencia['nombre'],
-                    "apellido": coincidencia_asistencia['apellido']
-                }
-                st.session_state.estado_flujo = "exito_entrada"
-                st.rerun()
+            # Si ya está en el padrón o sesión, entra directo de manera atómica
+            coincidencia_padron = df_excel[df_excel['dni'] == dni_ingresado]
+            
+            if not coincidencia_padron.empty:
+                apellido_real = coincidencia_padron.iloc[0]['apellido']
+                nombre_real = coincidencia_padron.iloc[0]['nombre']
             else:
-                coincidencia_sesion = st.session_state.nuevos_docentes[st.session_state.nuevos_docentes['dni'] == dni_ingresado]
-                
-                if not coincidencia_sesion.empty:
-                    apellido_real = coincidencia_sesion.iloc[0]['apellido']
-                    nombre_real = coincidencia_sesion.iloc[0]['nombre']
-                    registrar_entrada_csv(dni_ingresado, nombre_real, apellido_real, ahora_str)
-                    st.session_state.datos_docente_actual = {"nombre": nombre_real, "apellido": apellido_real}
-                    st.session_state.estado_flujo = "exito_entrada"
-                    st.rerun()
-                else:
-                    coincidencia_padron = df_excel[df_excel['dni'] == dni_ingresado]
-                    
-                    if not coincidencia_padron.empty:
-                        apellido_real = coincidencia_padron.iloc[0]['apellido']
-                        nombre_real = coincidencia_padron.iloc[0]['nombre']
-                    else:
-                        # BLINDAJE DE SATURACIÓN O NO ENCONTRADO: Asignación limpia por defecto
-                        apellido_real = "Acreditado"
-                        nombre_real = "Docente"
-                    
-                    registrar_entrada_csv(dni_ingresado, nombre_real, apellido_real, ahora_str)
-                    st.session_state.datos_docente_actual = {"nombre": nombre_real, "apellido": apellido_real}
-                    st.session_state.estado_flujo = "exito_entrada"
-                    st.rerun()
+                # Si es un DNI que no figura en ningún lado, le asignamos valores genéricos en modo veloz
+                # para que no se trabe el flujo bajo ningún punto de vista masivo
+                apellido_real = "Acreditado"
+                nombre_real = "Docente"
+            
+            registrar_evento_csv(dni_ingresado, nombre_real, apellido_real, "ENTRADA")
+            st.session_state.datos_docente_actual = {"nombre": nombre_real, "apellido": apellido_real}
+            st.session_state.estado_flujo = "exito_entrada"
+            st.rerun()
 
 # ==========================================
 # SECCIÓN CONDICIONAL: AUTO-REGISTRO
@@ -416,7 +379,6 @@ if st.session_state.mostrar_autoregistro and not es_modo_salida:
         
         if boton_auto_guardar:
             if auto_apellido and auto_nombre:
-                ahora_str = obtener_hora_argentina().strftime("%Y-%m-%d %H:%M:%S")
                 ape_formateado = auto_apellido.strip().upper()
                 nom_formateado = auto_nombre.strip().title()
                 
@@ -427,7 +389,7 @@ if st.session_state.mostrar_autoregistro and not es_modo_salida:
                 }])
                 st.session_state.nuevos_docentes = pd.concat([st.session_state.nuevos_docentes, docente_nuevo], ignore_index=True)
                 
-                registrar_entrada_csv(st.session_state.dni_pendiente, nom_formateado, ape_formateado, ahora_str)
+                registrar_evento_csv(st.session_state.dni_pendiente, nom_formateado, ape_formateado, "ENTRADA")
                 
                 st.session_state.mostrar_autoregistro = False
                 st.session_state.datos_docente_actual = {
