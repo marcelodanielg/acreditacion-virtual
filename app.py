@@ -5,6 +5,7 @@ import os
 import io
 import qrcode
 from PIL import Image
+import time
 
 # Configuración de la página con tema centrado y estética compacta
 st.set_page_config(page_title="Acreditación Virtual", page_icon="🎓", layout="centered")
@@ -43,25 +44,47 @@ st.markdown("""
 
 # --- FUNCIÓN GLOBAL PARA OBTENER LA HORA DE ARGENTINA (GMT-3) ---
 def obtener_hora_argentina():
-    # Creamos de manera nativa la zona horaria UTC-3 sin dependencias externas
     tz_arg = timezone(timedelta(hours=-3))
     return datetime.now(tz_arg)
-
-# --- LOGO DEL MINISTERIO DE EDUCACIÓN DE SAN JUAN ---
-URL_LOGO_MINISTERIO = "image_587576.png"
-
-# Columnas laterales muy delgadas para que el logo ocupe el máximo espacio central disponible de forma gigante
-col_logo_1, col_logo_2, col_logo_3 = st.columns([0.2, 3.6, 0.2])
-with col_logo_2:
-    st.image(URL_LOGO_MINISTERIO, use_container_width=True)
-
-st.markdown("---")
 
 # Nombres de los archivos de datos
 EXCEL_PADRON = "docentes.xlsx"
 EXCEL_ASISTENCIA = "asistencia_registrada.xlsx"
 ARCHIVO_LINK = "link_config.txt"
 ARCHIVO_ESTADO = "estado_programa.txt"
+
+# --- FUNCIONES BLINDADAS PARA EVITAR ERRORES ZLIB (CORRUPCIÓN) ---
+def cargar_asistencias_seguro():
+    if os.path.exists(EXCEL_ASISTENCIA):
+        try:
+            return pd.read_excel(EXCEL_ASISTENCIA, dtype={"dni": str})
+        except Exception:
+            # Si el archivo está corrupto (zlib error), hacemos un backup del roto y creamos uno nuevo
+            try:
+                os.rename(EXCEL_ASISTENCIA, f"corrupto_{int(time.time())}_{EXCEL_ASISTENCIA}")
+            except:
+                pass
+            return pd.DataFrame(columns=["dni", "nombre", "apellido", "fecha_hora_entrada", "fecha_hora_salida", "minutos_conectado"])
+    return pd.DataFrame(columns=["dni", "nombre", "apellido", "fecha_hora_entrada", "fecha_hora_salida", "minutos_conectado"])
+
+def guardar_asistencias_seguro(df):
+    # Intentos reiterados cortos por si hay bloqueos de escritura concurrente
+    for _ in range(3):
+        try:
+            df.to_excel(EXCEL_ASISTENCIA, index=False)
+            return True
+        except Exception:
+            time.sleep(0.2)
+    return False
+
+# --- LOGO DEL MINISTERIO DE EDUCACIÓN DE SAN JUAN ---
+URL_LOGO_MINISTERIO = "image_587576.png"
+
+col_logo_1, col_logo_2, col_logo_3 = st.columns([0.2, 3.6, 0.2])
+with col_logo_2:
+    st.image(URL_LOGO_MINISTERIO, use_container_width=True)
+
+st.markdown("---")
 
 # --- MANEJO DEL LINK DINÁMICO CON VALIDACIÓN HTTP ---
 def leer_link_actual():
@@ -110,7 +133,10 @@ if "datos_docente_actual" not in st.session_state:
 @st.cache_data(ttl=10)
 def cargar_padron():
     if os.path.exists(EXCEL_PADRON):
-        return pd.read_excel(EXCEL_PADRON, dtype={"dni": str})
+        try:
+            return pd.read_excel(EXCEL_PADRON, dtype={"dni": str})
+        except:
+            return pd.DataFrame(columns=["dni", "apellido", "nombre"])
     else:
         return pd.DataFrame(columns=["dni", "apellido", "nombre"])
 
@@ -176,9 +202,9 @@ if password == "admin123":
     st.sidebar.markdown("---")
     
     st.sidebar.subheader("📥 Gestión de Asistencias")
-    if os.path.exists(EXCEL_ASISTENCIA):
-        df_descarga = pd.read_excel(EXCEL_ASISTENCIA, dtype={"dni": str})
-        
+    df_descarga = cargar_asistencias_seguro()
+    
+    if not df_descarga.empty:
         total_presentes = len(df_descarga)
         con_salida = df_descarga["fecha_hora_salida"].notna().sum() if "fecha_hora_salida" in df_descarga.columns else 0
         
@@ -206,7 +232,8 @@ if password == "admin123":
         
         if btn_reiniciar and confirmar_borrado:
             try:
-                os.remove(EXCEL_ASISTENCIA)
+                if os.path.exists(EXCEL_ASISTENCIA):
+                    os.remove(EXCEL_ASISTENCIA)
                 st.session_state.nuevos_docentes = pd.DataFrame(columns=["dni", "apellido", "nombre"])
                 st.session_state.estado_flujo = "formulario"
                 st.sidebar.success("¡Base de datos limpia!")
@@ -271,16 +298,14 @@ if boton_enviar:
         st.error("⚠️ Por favor, ingrese un número de DNI válido.")
     else:
         dni_ingresado = dni_ingresado.strip()
-        
-        # Obtenemos la fecha y hora configurada en la zona horaria correcta de Argentina
         ahora_dt = obtener_hora_argentina()
         ahora_str = ahora_dt.strftime("%Y-%m-%d %H:%M:%S")
         
+        df_asistencias = cargar_asistencias_seguro()
+        
         # [MODO SALIDA]: Lógica de Egreso
         if es_modo_salida:
-            if os.path.exists(EXCEL_ASISTENCIA):
-                df_asistencias = pd.read_excel(EXCEL_ASISTENCIA, dtype={"dni": str})
-                
+            if not df_asistencias.empty:
                 if "fecha_hora_entrada" not in df_asistencias.columns and "fecha_hora" in df_asistencias.columns:
                     df_asistencias.rename(columns={"fecha_hora": "fecha_hora_entrada"}, inplace=True)
                 
@@ -303,10 +328,8 @@ if boton_enviar:
                             entrada_dt = ahora_dt
                             df_asistencias.at[idx[0], "fecha_hora_entrada"] = ahora_str
                         else:
-                            # Reconstruimos la fecha de entrada como "naive" u offset-aware dependiendo del string guardado
                             try:
                                 entrada_dt = datetime.strptime(str(entrada_str), "%Y-%m-%d %H:%M:%S")
-                                # Le asignamos la misma zona horaria para poder restar sin errores de tipos
                                 entrada_dt = entrada_dt.replace(tzinfo=timezone(timedelta(hours=-3)))
                             except:
                                 entrada_dt = ahora_dt
@@ -316,7 +339,7 @@ if boton_enviar:
                         
                         df_asistencias.at[idx[0], "fecha_hora_salida"] = ahora_str
                         df_asistencias.at[idx[0], "minutos_conectado"] = minutos_totales
-                        df_asistencias.to_excel(EXCEL_ASISTENCIA, index=False)
+                        guardar_asistencias_seguro(df_asistencias)
                         
                         st.session_state.datos_docente_actual = {
                             "nombre": df_asistencias.loc[idx[0], 'nombre'],
@@ -342,12 +365,11 @@ if boton_enviar:
             ya_presente = False
             datos_presente = None
             
-            if os.path.exists(EXCEL_ASISTENCIA):
-                df_asistencias_viejas = pd.read_excel(EXCEL_ASISTENCIA, dtype={"dni": str})
-                if "fecha_hora_entrada" not in df_asistencias_viejas.columns:
-                    df_asistencias_viejas.rename(columns={"fecha_hora": "fecha_hora_entrada"}, inplace=True)
+            if not df_asistencias.empty:
+                if "fecha_hora_entrada" not in df_asistencias.columns:
+                    df_asistencias.rename(columns={"fecha_hora": "fecha_hora_entrada"}, inplace=True)
                 
-                coincidencia_asistencia = df_asistencias_viejas[df_asistencias_viejas['dni'] == dni_ingresado]
+                coincidencia_asistencia = df_asistencias[df_asistencias['dni'] == dni_ingresado]
                 if not coincidencia_asistencia.empty:
                     ya_presente = True
                     datos_presente = coincidencia_asistencia.iloc[0]
@@ -375,12 +397,8 @@ if boton_enviar:
                         "minutos_conectado": None
                     }])
                     
-                    if os.path.exists(EXCEL_ASISTENCIA):
-                        df_final = pd.concat([df_asistencias_viejas, nueva_asistencia], ignore_index=True)
-                    else:
-                        df_final = nueva_asistencia
-                    
-                    df_final.to_excel(EXCEL_ASISTENCIA, index=False)
+                    df_final = pd.concat([df_asistencias, nueva_asistencia], ignore_index=True)
+                    guardar_asistencias_seguro(df_final)
                     
                     st.session_state.datos_docente_actual = {
                         "nombre": nombre_real,
@@ -433,13 +451,9 @@ if st.session_state.mostrar_autoregistro and not es_modo_salida:
                     "minutos_conectado": None
                 }])
                 
-                if os.path.exists(EXCEL_ASISTENCIA):
-                    df_asistencias_viejas = pd.read_excel(EXCEL_ASISTENCIA, dtype={"dni": str})
-                    df_final = pd.concat([df_asistencias_viejas, nueva_asistencia], ignore_index=True)
-                else:
-                    df_final = nueva_asistencia
-                
-                df_final.to_excel(EXCEL_ASISTENCIA, index=False)
+                df_asistencias_viejas = cargar_asistencias_seguro()
+                df_final = pd.concat([df_asistencias_viejas, nueva_asistencia], ignore_index=True)
+                guardar_asistencias_seguro(df_final)
                 
                 st.session_state.mostrar_autoregistro = False
                 st.session_state.datos_docente_actual = {
