@@ -203,15 +203,16 @@ if password == "admin123":
             df_crudo = pd.DataFrame()
             
         if not df_crudo.empty:
-            total_ingresos = len(df_crudo[df_crudo["tipo_registro"] == "ENTRADA"])
-            total_egresos = len(df_crudo[df_crudo["tipo_registro"] == "SALIDA"])
+            # --- SOLUCIÓN DEL TRUCO: Contamos solo personas reales (DNI únicos) ---
+            ingresos_unicos = df_crudo[df_crudo["tipo_registro"] == "ENTRADA"]["dni"].nunique()
+            egresos_unicos = df_crudo[df_crudo["tipo_registro"] == "SALIDA"]["dni"].nunique()
             
             st.sidebar.markdown("### 📊 Indicadores en Vivo")
             col_m1, col_m2 = st.sidebar.columns(2)
-            col_m1.metric("Ingresos", total_ingresos)
-            col_m2.metric("Egresos", total_egresos)
+            col_m1.metric("Ingresos Reales", ingresos_unicos)
+            col_m2.metric("Egresos Reales", egresos_unicos)
             
-            # PROCESAMIENTO INTELIGENTE BAJO DEMANDA PARA EL REPORTE EXCEL FINAL
+            # PROCESAMIENTO BAJO DEMANDA PARA EL REPORTE EXCEL FINAL
             df_entradas = df_crudo[df_crudo["tipo_registro"] == "ENTRADA"].drop_duplicates(subset=["dni"], keep="first")
             df_salidas = df_crudo[df_crudo["tipo_registro"] == "SALIDA"].drop_duplicates(subset=["dni"], keep="last")
             
@@ -261,6 +262,10 @@ if password == "admin123":
                     st.rerun()
                 except Exception as e:
                     st.sidebar.error(f"Error: {e}")
+        else:
+            st.sidebar.info("Aún no se registran asistencias.")
+    else:
+        st.sidebar.info("Aún no se registran asistencias.")
 
 
 # ==========================================
