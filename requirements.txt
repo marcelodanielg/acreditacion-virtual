@@ -4,3 +4,4 @@ openpyxl
 qrcode
 pillow
 st-gsheets-connection
+filelock
