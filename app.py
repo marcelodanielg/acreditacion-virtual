@@ -31,7 +31,6 @@ st.markdown("""
         [data-testid="stStatusWidget"] {display:none !important;}
         iframe[title="Streamlit Cloud Toolbar"] {display: none !important; visibility: hidden !important;}
         div[class*="viewerBadge"] {display: none !important; visibility: hidden !important;}
-        button[class*="StyledAppActionButton"] {display: none !important; visibility: hidden !important;}
         div[data-testid="stDecoration"] {display: none !important;}
     </style>
 """, unsafe_allow_html=True)
