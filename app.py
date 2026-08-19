@@ -6,11 +6,17 @@ import io
 import qrcode
 import time
 import csv
+from filelock import FileLock
 
 # Configuración de la página con tema centrado y estética compacta
-st.set_page_config(page_title="Acreditación Virtual", page_icon="🎓", layout="centered")
+st.set_page_config(
+    page_title="Acreditación Virtual",
+    page_icon="🎓",
+    layout="centered",
+    initial_sidebar_state="expanded"
+)
 
-# CSS definitivo: Logo optimizado y márgenes internos en su mínima expresión
+# CSS definitivo: Ajustes de márgenes y visibilidad permitiendo despliegue del Sidebar
 st.markdown("""
     <style>
         .block-container { padding-top: 0.5rem !important; padding-bottom: 0rem !important; }
@@ -20,7 +26,6 @@ st.markdown("""
         div[data-testid="stVerticalBlock"] > div { padding-bottom: 0.05rem !important; }
         hr { margin-top: 0.3rem !important; margin-bottom: 0.3rem !important; }
         footer {visibility: hidden; display: none !important;}
-        header {visibility: hidden; display: none !important;}
         #MainMenu {visibility: hidden; display: none !important;}
         .stAppDeployButton {display:none !important;}
         [data-testid="stStatusWidget"] {display:none !important;}
@@ -39,45 +44,75 @@ def obtener_hora_argentina():
 # Nombres de los archivos de datos
 EXCEL_PADRON = "docentes.xlsx"
 CSV_ASISTENCIA = "asistencia_registrada.csv"  
+LOCK_ASISTENCIA = "asistencia_registrada.csv.lock"
 ARCHIVO_LINK = "link_config.txt"
 ARCHIVO_ESTADO = "estado_programa.txt"
 
-# --- INICIALIZAR EL ARCHIVO CSV SI NO EXISTE ---
+# --- INICIALIZAR EL ARCHIVO CSV SI NO EXISTE CON CONTROL DE CONCURRENCIA ---
 if not os.path.exists(CSV_ASISTENCIA):
+    lock = FileLock(LOCK_ASISTENCIA, timeout=5)
     try:
-        with open(CSV_ASISTENCIA, mode="w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["dni", "nombre", "apellido", "tipo_registro", "fecha_hora"])
+        with lock:
+            if not os.path.exists(CSV_ASISTENCIA):
+                with open(CSV_ASISTENCIA, mode="w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["dni", "nombre", "apellido", "tipo_registro", "fecha_hora"])
     except Exception:
         pass
 
-# --- PROCESOS ULTRA VELOCES DE ESCRITURA EN CSV (MODO APPEND INMUNE A FALLOS) ---
+# --- PROCESOS ULTRA VELOCES DE ESCRITURA EN CSV CON FILELOCK (CONCURRENCIA ALTÍSIMA) ---
 def registrar_evento_csv(dni, nombre, apellido, tipo):
     ahora_str = obtener_hora_argentina().strftime("%Y-%m-%d %H:%M:%S")
-    for _ in range(5):  
-        try:
+    lock = FileLock(LOCK_ASISTENCIA, timeout=10)
+    try:
+        with lock:
             with open(CSV_ASISTENCIA, mode="a", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
                 writer.writerow([dni, nombre, apellido, tipo, ahora_str])
-            return True
-        except IOError:
-            time.sleep(0.05)
-    return False
+        return True
+    except Exception:
+        return False
+
+# --- CACHÉ PERSISTENTE DEL PADRÓN BASE CON OPTIMIZACIÓN DE BÚSQUEDA ---
+@st.cache_data(ttl=3600, show_spinner=False)
+def cargar_padron_diccionario():
+    if os.path.exists(EXCEL_PADRON):
+        try:
+            df = pd.read_excel(EXCEL_PADRON, dtype={"dni": str})
+            df['dni'] = df['dni'].astype(str).str.strip()
+            # Retorna un diccionario {dni: (nombre, apellido)} para búsqueda en tiempo constante O(1)
+            padron_dict = {}
+            for _, row in df.iterrows():
+                padron_dict[row['dni']] = (str(row.get('nombre', '')), str(row.get('apellido', '')))
+            return padron_dict
+        except Exception:
+            return {}
+    return {}
+
+padron_dict = cargar_padron_diccionario()
 
 # Buscador rápido en el padrón o en asistencias previas
 def buscar_nombre_en_padron_o_asistencia(dni):
-    coincidencia_padron = df_excel[df_excel['dni'] == str(dni)]
-    if not coincidencia_padron.empty:
-        return coincidencia_padron.iloc[0]['nombre'], coincidencia_padron.iloc[0]['apellido']
+    dni_str = str(dni).strip()
     
+    # 1. Búsqueda en caché O(1)
+    if dni_str in padron_dict:
+        nom, ape = padron_dict[dni_str]
+        return nom, ape
+    
+    # 2. Búsqueda en asistencias grabadas
     if os.path.exists(CSV_ASISTENCIA):
+        lock = FileLock(LOCK_ASISTENCIA, timeout=5)
         try:
-            df = pd.read_csv(CSV_ASISTENCIA, dtype={"dni": str}, keep_default_na=False)
-            coincidencia = df[df['dni'] == str(dni)]
+            with lock:
+                df = pd.read_csv(CSV_ASISTENCIA, dtype={"dni": str}, keep_default_na=False)
+            df['dni'] = df['dni'].astype(str).str.strip()
+            coincidencia = df[df['dni'] == dni_str]
             if not coincidencia.empty:
                 return coincidencia.iloc[0]['nombre'], coincidencia.iloc[0]['apellido']
-        except:
+        except Exception:
             pass
+            
     return None, None
 
 # --- LOGO DEL MINISTERIO DE EDUCACIÓN DE SAN JUAN ---
@@ -92,28 +127,40 @@ st.markdown("---")
 # --- MANEJO DEL LINK DINÁMICO ---
 def leer_link_actual():
     if os.path.exists(ARCHIVO_LINK):
-        with open(ARCHIVO_LINK, "r", encoding="utf-8") as f:
-            return f.read().strip()
+        try:
+            with open(ARCHIVO_LINK, "r", encoding="utf-8") as f:
+                return f.read().strip()
+        except Exception:
+            pass
     return "https://ingrese-el-link-desde-el-panel-de-control.com"
 
 def guardar_nuevo_link(nuevo_url):
     url_limpia = nuevo_url.strip()
     if url_limpia and not (url_limpia.startswith("http://") or url_limpia.startswith("https://")):
         url_limpia = "https://" + url_limpia
-    with open(ARCHIVO_LINK, "w", encoding="utf-8") as f:
-        f.write(url_limpia)
+    try:
+        with open(ARCHIVO_LINK, "w", encoding="utf-8") as f:
+            f.write(url_limpia)
+    except Exception:
+        pass
 
 # --- MANEJO DEL ESTADO DEL PROGRAMA ---
 def leer_estado_programa():
     if os.path.exists(ARCHIVO_ESTADO):
-        with open(ARCHIVO_ESTADO, "r", encoding="utf-8") as f:
-            return f.read().strip() == "ACTIVO"
+        try:
+            with open(ARCHIVO_ESTADO, "r", encoding="utf-8") as f:
+                return f.read().strip() == "ACTIVO"
+        except Exception:
+            pass
     return True
 
 def guardar_estado_programa(activo):
     estado = "ACTIVO" if activo else "DESACTIVADO"
-    with open(ARCHIVO_ESTADO, "w", encoding="utf-8") as f:
-        f.write(estado)
+    try:
+        with open(ARCHIVO_ESTADO, "w", encoding="utf-8") as f:
+            f.write(estado)
+    except Exception:
+        pass
 
 # --- DETECTAR MODO DESDE LA URL ---
 query_params = st.query_params
@@ -128,20 +175,6 @@ if "estado_flujo" not in st.session_state:
     st.session_state.estado_flujo = "formulario"
 if "datos_docente_actual" not in st.session_state:
     st.session_state.datos_docente_actual = {}
-
-# --- CACHÉ PERSISTENTE DEL PADRÓN BASE ---
-@st.cache_data(ttl=600, show_spinner=False)
-def cargar_padron_estatico():
-    if os.path.exists(EXCEL_PADRON):
-        try:
-            df = pd.read_excel(EXCEL_PADRON, dtype={"dni": str})
-            df['dni'] = df['dni'].str.strip()
-            return df[["dni", "apellido", "nombre"]]
-        except:
-            return pd.DataFrame(columns=["dni", "apellido", "nombre"])
-    return pd.DataFrame(columns=["dni", "apellido", "nombre"])
-
-df_excel = cargar_padron_estatico()
 
 # ==========================================
 # PANEL DE ADMINISTRACIÓN (Barra Lateral)
@@ -198,12 +231,13 @@ if password == "admin123":
     
     if os.path.exists(CSV_ASISTENCIA):
         try:
-            df_crudo = pd.read_csv(CSV_ASISTENCIA, dtype={"dni": str})
-        except:
+            lock = FileLock(LOCK_ASISTENCIA, timeout=5)
+            with lock:
+                df_crudo = pd.read_csv(CSV_ASISTENCIA, dtype={"dni": str})
+        except Exception:
             df_crudo = pd.DataFrame()
             
         if not df_crudo.empty:
-            # --- SOLUCIÓN DEL TRUCO: Contamos solo personas reales (DNI únicos) ---
             ingresos_unicos = df_crudo[df_crudo["tipo_registro"] == "ENTRADA"]["dni"].nunique()
             egresos_unicos = df_crudo[df_crudo["tipo_registro"] == "SALIDA"]["dni"].nunique()
             
@@ -227,7 +261,7 @@ if password == "admin123":
                     e = datetime.strptime(str(row["fecha_hora_entrada"]), "%Y-%m-%d %H:%M:%S")
                     s = datetime.strptime(str(row["fecha_hora_salida"]), "%Y-%m-%d %H:%M:%S")
                     return round((s - e).total_seconds() / 60, 1)
-                except:
+                except Exception:
                     return ""
             
             if not df_reporte.empty:
@@ -254,8 +288,13 @@ if password == "admin123":
             
             if btn_reiniciar and confirmar_borrado:
                 try:
-                    if os.path.exists(CSV_ASISTENCIA):
-                        os.remove(CSV_ASISTENCIA)
+                    lock = FileLock(LOCK_ASISTENCIA, timeout=5)
+                    with lock:
+                        if os.path.exists(CSV_ASISTENCIA):
+                            os.remove(CSV_ASISTENCIA)
+                        with open(CSV_ASISTENCIA, mode="w", newline="", encoding="utf-8") as f:
+                            writer = csv.writer(f)
+                            writer.writerow(["dni", "nombre", "apellido", "tipo_registro", "fecha_hora"])
                     st.session_state.estado_flujo = "formulario"
                     st.session_state.mostrar_autoregistro = False
                     st.sidebar.success("¡Base de datos limpia!")
