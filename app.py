@@ -13,7 +13,7 @@ st.set_page_config(
     page_title="Acreditación Virtual",
     page_icon="🎓",
     layout="centered",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # CSS definitivo: Ajustes de márgenes y visibilidad permitiendo despliegue del Sidebar
